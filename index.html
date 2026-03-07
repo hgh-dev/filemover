@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Mover</title>
+    <!-- PWA 관련 메타태그 및 매니페스트 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#007bff">
+    <link rel="apple-touch-icon" href="icon-192.png">
+
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f7f9fc;
+            padding: 0;
+            margin: 0;
+            color: #333;
+            height: 100dvh;
+            /* 모바일 주소창 제외한 뷰포트 */
+            overflow: hidden;
+        }
+
+        .container {
+            max-width: 800px;
+            height: 100dvh;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* appContent 내부도 플렉스 콜럼으로 */
+        #appContent {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* 로그인 화면 스타일 */
+        #loginScreen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 80vh;
+        }
+
+        #loginBtn {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #4285F4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #loginBtn:hover {
+            background: #357ae8;
+        }
+
+        /* 상단바 및 앱 본문 공통 스타일 */
+        .top-app-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background-color: #fff;
+            position: relative;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .icon-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #444;
+        }
+
+        .icon-button:hover {
+            background-color: #f0f0f0;
+        }
+
+        .app-title {
+            font-size: 1rem;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .profile-container {
+            position: relative;
+        }
+
+        .profile-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: #7b5bba;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: bold;
+            overflow: hidden;
+            padding: 0;
+        }
+
+        .profile-btn img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* 팝업 스타일 */
+        .profile-popup {
+            position: absolute;
+            top: 55px;
+            right: 0;
+            width: 300px;
+            background-color: #eef2f9;
+            border-radius: 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .popup-header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px 20px 20px;
+        }
+
+        .large-profile-pic {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background-color: #7b5bba;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+
+        .large-profile-pic img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .popup-name {
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 5px;
+        }
+
+        .popup-email {
+            font-size: 0.85rem;
+            color: #555;
+            margin-bottom: 15px;
+        }
+
+        .popup-actions {
+            background-color: #fff;
+            border-radius: 20px;
+            margin: 0 10px 10px 10px;
+            padding: 10px 0;
+        }
+
+        .popup-action-btn {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 0.95rem;
+            color: #333;
+            text-align: left;
+        }
+
+        .popup-action-btn:hover {
+            background-color: #f7f7f7;
+        }
+
+        .popup-action-btn .icon {
+            margin-right: 15px;
+            font-size: 20px;
+            color: #555;
+        }
+
+        /* 필터 바 스타일 */
+        .filter-bar {
+            display: flex;
+            gap: 8px;
+            padding: 10px 12px;
+            background-color: #fff;
+            border-bottom: 1px solid #eaeaea;
+        }
+
+        .filter-chip {
+            flex: 1;
+            padding: 6px 4px;
+            border-radius: 7px;
+            background-color: #f2f4f7;
+            border: none;
+            color: #666;
+            font-size: 0.8rem;
+            cursor: pointer;
+            white-space: nowrap;
+            text-align: center;
+        }
+
+        .filter-chip.active {
+            background-color: #333;
+            color: white;
+            font-weight: bold;
+        }
+
+        .filter-chip:hover:not(.active) {
+            background-color: #e5e7ea;
+        }
+
+        /* 하단 중앙 고정 FAB(+ 버튼) */
+        .add-action-btn {
+            position: fixed;
+            bottom: 22px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+            z-index: 500;
+            transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+        }
+
+        .add-action-btn .material-symbols-outlined {
+            font-size: 24px;
+        }
+
+        .add-action-btn:hover {
+            transform: translateX(-50%) scale(1.1);
+            background: #0056b3;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+        }
+
+        /* 추가 메뉴 팝업 */
+        .add-menu-popup {
+            position: absolute;
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            padding: 8px 0;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            min-width: 150px;
+        }
+
+        .add-menu-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 0.95rem;
+            color: #333;
+            text-align: left;
+        }
+
+        .add-menu-item:hover {
+            background-color: #f0f0f0;
+        }
+
+        .add-menu-item .material-symbols-outlined {
+            margin-right: 12px;
+            font-size: 20px;
+            color: #555;
+        }
+
+        /* 모달 스타일 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .modal-content {
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            box-sizing: border-box;
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+
+        .modal-content textarea,
+        .modal-content input[type="url"],
+        .modal-content input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-family: inherit;
+            margin-bottom: 20px;
+            font-size: 1rem;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .modal-actions button {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .modal-actions .cancel-btn {
+            background-color: #e0e0e0;
+            color: #333;
+        }
+
+        .modal-actions .save-btn {
+            background-color: #007bff;
+            color: white;
+        }
+
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 16px 90px;
+        }
+
+        .upload-section {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .card-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .list-card {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+            display: flex;
+            flex-direction: column;
+            /* 세로 레이아웃 */
+            overflow: visible;
+            position: relative;
+        }
+
+        /* 최상단 행: 뱃지 + ⋮ 버튼 */
+        .card-top-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 4px 0 0;
+        }
+
+        /* 좌측 썸네일 영역 - 숨김 */
+        .card-thumb {
+            display: none;
+        }
+
+        .card-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .card-thumb .fallback-icon {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #888;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .card-thumb .fallback-icon .material-symbols-outlined {
+            font-size: 32px;
+            margin-bottom: 4px;
+            color: #aaa;
+        }
+
+        /* 지와 라벨 뱃지 */
+        .card-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            font-size: 0.68rem;
+            font-weight: 800;
+            color: white;
+            border-radius: 0 0 8px 0;
+            /* 좌측상단 구석에맞게 우하 둥글문만 */
+            letter-spacing: 0.5px;
+            align-self: flex-start;
+        }
+
+        .badge-memo {
+            background-color: #e2a849;
+        }
+
+        /* 예시 색상 */
+        .badge-link {
+            background-color: #58b2c2;
+        }
+
+        .badge-photo {
+            background-color: #e55c91;
+        }
+
+        .badge-file {
+            background-color: #6a5bbd;
+        }
+
+        /* 본문: 제목 + 내용 + 날짜 + 만료 */
+        .card-body {
+            flex: 1;
+            padding: 2px 12px 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            overflow: hidden;
+        }
+
+        .card-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 4px;
+        }
+
+        .card-title {
+            font-size: 0.92rem;
+            font-weight: bold;
+            color: #222;
+            margin: 0;
+            line-height: 1.3;
+            word-wrap: break-word;
+            word-break: break-all;
+        }
+
+        .card-desc {
+            font-size: 0.78rem;
+            color: #777;
+            margin: 0;
+            line-height: 1.4;
+            flex-grow: 1;
+        }
+
+        /* 3줄 말줄임표 처리 유틸 클래스 */
+        .desc-clamp {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            line-clamp: 3;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* 펼쳐보기 (자세히보기) 버튼 */
+        .toggle-desc-btn {
+            background: none;
+            border: none;
+            color: #007bff;
+            font-size: 0.8rem;
+            cursor: pointer;
+            padding: 2px 0;
+            margin-top: 2px;
+            align-self: flex-start;
+        }
+
+        .toggle-desc-btn:hover {
+            text-decoration: underline;
+        }
+
+        /* 다중 이미지 썸네일 컨테이너 */
+        .multi-thumb-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2px;
+            width: 100%;
+            height: 100%;
+            padding: 2px;
+            box-sizing: border-box;
+        }
+
+        .multi-thumb-item {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        .card-footer-row {
+            display: flex;
+            justify-content: flex-end;
+            /* 날짜를 우측으로 */
+            align-items: center;
+            font-size: 0.75rem;
+            color: #999;
+            margin-top: 8px;
+        }
+
+        .card-source {
+            display: none;
+            /* FileMover 레이블 숨김 */
+        }
+
+        /* 날짜 텍스트 */
+        .card-date {
+            font-size: 0.7rem;
+            color: #bbb;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        /* 만료/삭제 상태 라인 */
+        .card-status {
+            min-height: 0;
+            text-align: right;
+            font-size: 0.68rem;
+            color: #555;
+            /* 기본: 얇고 어두운 회색 */
+        }
+
+        /* 더보기 영역 - 미사용 (column 레이아웃에서 topRow로 대체됨) */
+        .card-actions-col {
+            display: none;
+        }
+
+        .action-icon-btn {
+            background: none;
+            border: none;
+            padding: 4px;
+            cursor: pointer;
+            color: #ccc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .action-icon-btn:hover {
+            color: #777;
+        }
+
+        /* 경고 텍스트 및 연장 버튼 */
+        .warning-text {
+            color: #e74c3c;
+            font-weight: bold;
+            font-size: 0.68rem;
+            text-align: right;
+        }
+
+        .extend-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 3px 6px;
+            font-size: 0.68rem;
+            cursor: pointer;
+        }
+
+        .extend-btn:hover {
+            background: #218838;
+        }
+
+        /* 업로드 프로그레스 오버레이 */
+        #uploadOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 9999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        #uploadOverlay.active {
+            display: flex;
+        }
+
+        .upload-box {
+            background: #fff;
+            border-radius: 14px;
+            padding: 30px 36px;
+            text-align: center;
+            width: min(90%, 380px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .upload-box .upload-label {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .upload-box .upload-filename {
+            font-size: 0.82rem;
+            color: #777;
+            margin-bottom: 18px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .upload-progress-track {
+            width: 100%;
+            height: 10px;
+            background: #e8e8e8;
+            border-radius: 99px;
+            overflow: hidden;
+        }
+
+        .upload-progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #4A90E2, #7B5EA7);
+            border-radius: 99px;
+            transition: width 0.15s ease;
+        }
+
+        .upload-progress-pct {
+            margin-top: 10px;
+            font-size: 0.88rem;
+            color: #555;
+        }
+
+        .upload-count-label {
+            font-size: 0.80rem;
+            color: #aaa;
+            margin-top: 6px;
+        }
+
+        /* 다중 다운로드 목록 스타일 */
+        .multi-download-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 50vh;
+            overflow-y: auto;
+        }
+
+        .multi-download-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .multi-download-item:hover {
+            background-color: #f5f5f5;
+        }
+
+        .multi-download-item img {
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-right: 12px;
+        }
+
+        .multi-download-item .material-symbols-outlined {
+            font-size: 32px;
+            color: #666;
+            margin-right: 12px;
+        }
+
+        .multi-download-item-name {
+            flex: 1;
+            font-size: 0.95rem;
+            color: #333;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 업로드 진행 오버레이 -->
+    <div id="uploadOverlay">
+        <div class="upload-box">
+            <div class="upload-label">업로드 중...</div>
+            <div class="upload-filename" id="uploadFilename">파일명</div>
+            <div class="upload-progress-track">
+                <div class="upload-progress-bar" id="uploadProgressBar"></div>
+            </div>
+            <div class="upload-progress-pct" id="uploadProgressPct">0%</div>
+            <div class="upload-count-label" id="uploadCountLabel"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="loginScreen">
+            <h1>File Mover</h1>
+            <p>서비스를 이용하려면 로그인이 필요합니다.</p>
+            <button id="loginBtn">Google 계정으로 로그인</button>
+        </div>
+
+        <div id="appContent" style="display: none;">
+            <!-- 상단바 -->
+            <div class="top-app-bar">
+                <button class="icon-button" id="menuBtn">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
+                <div class="app-title">File Mover</div>
+                <div class="profile-container">
+                    <button class="profile-btn" id="profileBtn">U</button>
+
+                    <!-- 프로필 팝업 -->
+                    <div class="profile-popup" id="profilePopup" style="display: none;">
+                        <div class="popup-header">
+                            <div class="large-profile-pic" id="popupProfilePic">U</div>
+                            <div class="popup-name" id="popupName">User Name</div>
+                            <div class="popup-email" id="popupEmail">user@example.com</div>
+                        </div>
+                        <div class="popup-actions">
+                            <button class="popup-action-btn" id="addAccountBtn">
+                                <span class="material-symbols-outlined icon">person_add</span> 다른 계정 추가
+                            </button>
+                            <button class="popup-action-btn" id="logoutBtn">
+                                <span class="material-symbols-outlined icon">logout</span> 모든 계정에서 로그아웃
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 필터 바 영역 -->
+            <div style="position: relative;">
+                <div class="filter-bar">
+                    <button class="filter-chip active" data-filter="all">전체</button>
+                    <button class="filter-chip" data-filter="text">메모</button>
+                    <button class="filter-chip" data-filter="link">링크</button>
+                    <button class="filter-chip" data-filter="image">사진</button>
+                    <button class="filter-chip" data-filter="file">파일</button>
+                </div>
+            </div>
+
+            <!-- 하단 중앙 고정 + 버튼 & 팝업 메뉴 -->
+            <div style="position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 600;">
+                <!-- 윗 방향으로 열리는 팝업 메뉴 -->
+                <div class="add-menu-popup" id="addMenuPopup"
+                    style="display: none; bottom: 70px; left: 50%; transform: translateX(-50%); top: auto; right: auto;">
+                    <button class="add-menu-item" id="menuAddMemo"><span
+                            class="material-symbols-outlined">edit_square</span> 메모</button>
+                    <button class="add-menu-item" id="menuAddLink"><span class="material-symbols-outlined">link</span>
+                        링크</button>
+                    <button class="add-menu-item" id="menuAddPhoto"><span class="material-symbols-outlined">image</span>
+                        사진</button>
+                    <button class="add-menu-item" id="menuAddFile"><span class="material-symbols-outlined">folder</span>
+                        파일</button>
+                </div>
+                <button class="add-action-btn" id="mainAddBtn"><span
+                        class="material-symbols-outlined">add</span></button>
+            </div>
+
+            <div class="main-content">
+                <div id="quotaInfo" style="text-align: right; margin-bottom: 15px; font-size: 0.7em; color: #666;">현재
+                    사용량: 0 MB / 100 MB</div>
+                <div id="cardContainer" class="card-container">
+                </div>
+            </div> <!-- end of main-content -->
+
+            <!-- 숨겨진 파일 및 사진 업로드 인풋 -->
+            <input type="file" id="photoInput" accept="image/*" multiple style="display:none;">
+            <input type="file" id="generalFileInput" multiple style="display:none;">
+
+            <!-- 사진 크기 리사이징 옵션 모달 -->
+            <div class="modal-overlay" id="photoResizeModal" style="display: none;">
+                <div class="modal-content">
+                    <h3>사진 업로드 설정</h3>
+                    <p style="font-size: 0.9rem; color:#555; margin-bottom:15px;">사진 크기를 최적화하면 업로드 속도와 용량을 절약할 수 있습니다.
+                    </p>
+
+                    <label style="display:block; margin-bottom:5px; font-weight:bold;">크기 조절</label>
+                    <select id="resizeOption"
+                        style="width:100%; padding:8px; margin-bottom:15px; border-radius:6px; border:1px solid #ccc;">
+                        <option value="original">원본 크기</option>
+                        <option value="1024">가로 1024px</option>
+                        <option value="860" selected>가로 860px</option>
+                        <option value="640">가로 640px</option>
+                        <option value="custom">사용자 지정</option>
+                    </select>
+
+                    <input type="number" id="customWidth" placeholder="가로 픽셀 입력"
+                        style="display:none; width:100%; padding:8px; margin-bottom:15px; border-radius:6px; border:1px solid #ccc;">
+
+                    <div class="modal-actions">
+                        <button class="cancel-btn" id="cancelPhotoBtn">취소</button>
+                        <button class="save-btn" id="confirmPhotoBtn">사진 선택 계속</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 메모 입력 모달 -->
+            <div class="modal-overlay" id="memoModal" style="display: none;">
+                <div class="modal-content">
+                    <h3>메모 추가</h3>
+                    <input type="text" id="memoTitleInput" placeholder="제목을 입력하세요 (선택 사항)">
+                    <textarea id="memoInput" rows="5" placeholder="메모 내용을 상세히 입력하세요"></textarea>
+                    <div class="modal-actions">
+                        <button class="cancel-btn" id="cancelMemoBtn">취소</button>
+                        <button class="save-btn" id="saveMemoBtn">저장</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 링크 입력 모달 -->
+            <div class="modal-overlay" id="linkModal" style="display: none;">
+                <div class="modal-content">
+                    <h3>링크 추가</h3>
+                    <input type="url" id="linkInput" placeholder="URL을 입력하세요 (예: https://example.com)">
+                    <div class="modal-actions">
+                        <button class="cancel-btn" id="cancelLinkBtn">취소</button>
+                        <button class="save-btn" id="saveLinkBtn">저장</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 메모 뷰어 모달 -->
+            <div class="modal-overlay" id="memoViewModal"
+                style="display: none; z-index: 2000; background: rgba(0,0,0,0.85);">
+                <div class="modal-content"
+                    style="max-height: 85vh; display: flex; flex-direction: column; width: 90%; max-width: 600px;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                        <h3 id="memoViewTitle"
+                            style="margin: 0; color: #222; font-size: 1.15rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        </h3>
+                        <button id="closeMemoViewBtn" class="icon-button" style="color: #666; flex-shrink: 0;">
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+                    <textarea id="memoViewContent" placeholder="메모 내용을 입력하세요"
+                        style="flex: 1; min-height: 300px; resize: vertical; border: 1px solid #ddd; border-radius: 8px; padding: 14px; font-size: 1rem; line-height: 1.7; background: #fff; color: #333; font-family: inherit; outline: none; transition: border-color 0.2s;"
+                        onfocus="this.style.borderColor='#4A90E2'" onblur="this.style.borderColor='#ddd'"></textarea>
+                    <div style="margin-top: 14px; display: flex; justify-content: flex-end; gap: 10px;">
+                        <button id="memoViewCopyBtn"
+                            style="padding: 10px 18px; background: #6c757d; color: white; border: none; border-radius: 8px; font-size: 0.9rem; cursor: pointer; font-weight: bold; transition: background 0.2s;">내용
+                            복사</button>
+                        <button id="memoViewSaveBtn"
+                            style="padding: 10px 22px; background: #4A90E2; color: white; border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer; font-weight: bold; transition: background 0.2s;">저장</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 다중 다운로드 뷰어 모달 -->
+            <div class="modal-overlay" id="multiDownloadModal"
+                style="display: none; z-index: 2000; background: rgba(0,0,0,0.8);">
+                <div class="modal-content" style="max-height: 80vh; display: flex; flex-direction: column;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 style="margin: 0; color: #333;" id="multiDownloadTitle">파일 목록</h3>
+                        <button id="closeMultiDownloadBtn" class="icon-button" style="color: #666;">
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+                    <ul class="multi-download-list" id="multiDownloadList">
+                        <!-- 동적 추가 -->
+                    </ul>
+                </div>
+            </div>
+
+        </div> <!-- end of appContent -->
+    </div> <!-- end of container -->
+
+    <script type="module" src="script.js"></script>
+</body>
+
+</html>

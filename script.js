@@ -1,0 +1,857 @@
+// Firebase SDK 모듈 임포트 (CDN 방식)
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+// TODO: 본인의 Firebase 프로젝트 설정값으로 교체해야 합니다.
+const firebaseConfig = {
+    apiKey: "AIzaSyC49b-msgDEf_vorf1gmu3dJ_oKDPUrh5k",
+    authDomain: "filemover-7cc9f.firebaseapp.com",
+    projectId: "filemover-7cc9f",
+    storageBucket: "filemover-7cc9f.firebasestorage.app",
+    messagingSenderId: "Y857800312653",
+    appId: "Y1:857800312653:web:3af4530ef8722cab695904",
+    measurementId: "G-ZN7EWK4NB8"
+};
+
+// PWA: 서비스 워커 등록
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js')
+            .then(reg => console.log('Service Worker 등록 성공: ', reg.scope))
+            .catch(err => console.log('Service Worker 등록 실패: ', err));
+    });
+}
+
+// Firebase 초기화
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const provider = new GoogleAuthProvider();
+
+// DOM 요소 
+const loginScreen = document.getElementById('loginScreen');
+const appContent = document.getElementById('appContent');
+const loginBtn = document.getElementById('loginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const profileBtn = document.getElementById('profileBtn');
+const profilePopup = document.getElementById('profilePopup');
+const popupName = document.getElementById('popupName');
+const popupEmail = document.getElementById('popupEmail');
+const popupProfilePic = document.getElementById('popupProfilePic');
+const mainAddBtn = document.getElementById('mainAddBtn');
+const addMenuPopup = document.getElementById('addMenuPopup');
+const menuAddMemo = document.getElementById('menuAddMemo');
+const menuAddLink = document.getElementById('menuAddLink');
+const menuAddPhoto = document.getElementById('menuAddPhoto');
+const menuAddFile = document.getElementById('menuAddFile');
+
+const photoInput = document.getElementById('photoInput');
+const generalFileInput = document.getElementById('generalFileInput');
+
+const photoResizeModal = document.getElementById('photoResizeModal');
+const resizeOption = document.getElementById('resizeOption');
+const customWidthInput = document.getElementById('customWidth');
+const cancelPhotoBtn = document.getElementById('cancelPhotoBtn');
+const confirmPhotoBtn = document.getElementById('confirmPhotoBtn');
+
+const memoModal = document.getElementById('memoModal');
+const memoTitleInput = document.getElementById('memoTitleInput');
+const memoInput = document.getElementById('memoInput');
+const saveMemoBtn = document.getElementById('saveMemoBtn');
+const cancelMemoBtn = document.getElementById('cancelMemoBtn');
+
+const linkModal = document.getElementById('linkModal');
+const linkInput = document.getElementById('linkInput');
+const saveLinkBtn = document.getElementById('saveLinkBtn');
+const cancelLinkBtn = document.getElementById('cancelLinkBtn');
+
+// 다중 다운로드 모달 요소
+const multiDownloadModal = document.getElementById('multiDownloadModal');
+const closeMultiDownloadBtn = document.getElementById('closeMultiDownloadBtn');
+const multiDownloadList = document.getElementById('multiDownloadList');
+const multiDownloadTitle = document.getElementById('multiDownloadTitle');
+
+closeMultiDownloadBtn.addEventListener('click', () => multiDownloadModal.style.display = 'none');
+
+// 인증 상태 감지 및 UI 전환
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        loginScreen.style.display = 'none';
+        appContent.style.display = 'flex';
+
+        const initial = (user.displayName || user.email || 'U').charAt(0).toUpperCase();
+        const profileHtml = user.photoURL
+            ? `<img src="${user.photoURL}" alt="profile" referrerpolicy="no-referrer">`
+            : initial;
+
+        profileBtn.innerHTML = profileHtml;
+        popupProfilePic.innerHTML = profileHtml;
+        popupName.innerText = user.displayName || '사용자';
+        popupEmail.innerText = user.email || '';
+
+        // 데이터 불러오기 (Read)
+        loadUserData(user.uid);
+    } else {
+        loginScreen.style.display = 'flex';
+        appContent.style.display = 'none';
+        document.getElementById('cardContainer').innerHTML = ''; // 초기화
+    }
+});
+
+async function loadUserData(uid) {
+    const container = document.getElementById('cardContainer');
+    container.innerHTML = '';
+    totalUsedSpace = 0;
+
+    try {
+        const q = query(collection(db, "cards"), where("uid", "==", uid));
+        const querySnapshot = await getDocs(q);
+        const cards = [];
+        querySnapshot.forEach((doc) => {
+            cards.push({ id: doc.id, ...doc.data() });
+        });
+
+        // 최신 생성순 정렬
+        cards.sort((a, b) => a.uploadTime - b.uploadTime);
+
+        cards.forEach(cardData => {
+            createCard(cardData, cardData.id);
+            if (cardData.size) {
+                totalUsedSpace += (parseFloat(cardData.size) * 1024 * 1024);
+            }
+        });
+        updateQuotaUI();
+    } catch (error) {
+        console.error("데이터 로드 중 오류 발생:", error);
+    }
+}
+
+// 로그인 및 로그아웃 이벤트
+loginBtn.addEventListener('click', () => {
+    signInWithPopup(auth, provider).catch(error => {
+        console.error("로그인 에러:", error);
+        alert("로그인에 실패했습니다.");
+    });
+});
+
+logoutBtn.addEventListener('click', () => {
+    signOut(auth).catch(error => {
+        console.error("로그아웃 에러:", error);
+    });
+});
+
+// 프로필 팝업 토글
+profileBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    profilePopup.style.display = profilePopup.style.display === 'none' ? 'flex' : 'none';
+});
+
+// 추가 버튼(+) 팝업 토글
+mainAddBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    addMenuPopup.style.display = addMenuPopup.style.display === 'none' ? 'flex' : 'none';
+});
+
+// 외부 클릭 시 모든 팝업 닫기
+document.addEventListener('click', (e) => {
+    if (profilePopup && !profilePopup.contains(e.target) && !profileBtn.contains(e.target)) {
+        profilePopup.style.display = 'none';
+    }
+    if (addMenuPopup && !addMenuPopup.contains(e.target) && !mainAddBtn.contains(e.target)) {
+        addMenuPopup.style.display = 'none';
+    }
+});
+
+// === 메뉴 액션 등록 ===
+menuAddMemo.addEventListener('click', () => {
+    addMenuPopup.style.display = 'none';
+    memoInput.value = '';
+    memoModal.style.display = 'flex';
+});
+
+menuAddLink.addEventListener('click', () => {
+    addMenuPopup.style.display = 'none';
+    linkInput.value = '';
+    linkModal.style.display = 'flex';
+});
+
+menuAddPhoto.addEventListener('click', () => {
+    addMenuPopup.style.display = 'none';
+    photoResizeModal.style.display = 'flex';
+});
+
+resizeOption.addEventListener('change', function () {
+    customWidthInput.style.display = this.value === 'custom' ? 'inline-block' : 'none';
+});
+
+cancelPhotoBtn.addEventListener('click', () => photoResizeModal.style.display = 'none');
+confirmPhotoBtn.addEventListener('click', () => {
+    photoResizeModal.style.display = 'none';
+    photoInput.click();
+});
+
+menuAddFile.addEventListener('click', () => {
+    addMenuPopup.style.display = 'none';
+    generalFileInput.click();
+});
+
+// === 모달 닫기 버튼 ===
+cancelMemoBtn.addEventListener('click', () => memoModal.style.display = 'none');
+cancelLinkBtn.addEventListener('click', () => linkModal.style.display = 'none');
+
+// === 모달 저장 버튼 ===
+saveMemoBtn.addEventListener('click', async () => {
+    const title = memoTitleInput.value.trim();
+    const text = memoInput.value.trim();
+    if (!text) return;
+
+    if (!auth.currentUser) return;
+    saveMemoBtn.disabled = true;
+
+    const cardData = {
+        uid: auth.currentUser.uid,
+        type: 'text',
+        name: title || '제목없음', // 제목 미입력 시 기본값 처리
+        content: text,
+        expirationDays: 'permanent',
+        uploadTime: new Date().getTime()
+    };
+
+    try {
+        const docRef = await addDoc(collection(db, "cards"), cardData);
+        createCard(cardData, docRef.id);
+        memoModal.style.display = 'none';
+        memoTitleInput.value = '';
+        memoInput.value = '';
+    } catch (error) {
+        console.error("메모 저장 실패:", error);
+    } finally {
+        saveMemoBtn.disabled = false;
+    }
+});
+
+saveLinkBtn.addEventListener('click', async () => {
+    const link = linkInput.value.trim();
+    if (!link) return;
+
+    if (!auth.currentUser) return;
+    saveLinkBtn.disabled = true;
+
+    const cardData = {
+        uid: auth.currentUser.uid,
+        type: 'text',
+        content: link,
+        expirationDays: 'permanent',
+        uploadTime: new Date().getTime()
+    };
+
+    try {
+        const docRef = await addDoc(collection(db, "cards"), cardData);
+        createCard(cardData, docRef.id);
+        linkModal.style.display = 'none';
+        linkInput.value = '';
+    } catch (error) {
+        console.error("링크 저장 실패:", error);
+    } finally {
+        saveLinkBtn.disabled = false;
+    }
+});
+
+// === 다중 파일 처리 함수 ===
+let totalUsedSpace = 0;
+const MAX_SPACE = 100 * 1024 * 1024;
+
+async function handleFilesUpload(files, type) {
+    if (!files || files.length === 0) return;
+
+    // FileList는 DOM 요소와 연결된 Live Collection이므로, 비동기 작업 중 input.value가 초기화되면 같이 비워집니다.
+    // 이를 방지하기 위해 배열로 복사해서 사용합니다.
+    const fileArray = Array.from(files);
+
+    let totalNewSize = 0;
+    for (let file of fileArray) {
+        totalNewSize += file.size;
+    }
+
+    if (totalUsedSpace + totalNewSize > MAX_SPACE) {
+        alert(`전체 할당 용량(100MB)을 초과할 수 없습니다. 추가하려는 용량: ${(totalNewSize / (1024 * 1024)).toFixed(2)}MB`);
+        return;
+    }
+
+    let isImageGroup = type === 'image';
+    let fileUrls = [];
+    let originalNames = [];
+    let groupSize = 0;
+
+    // 업로드 오버레이 UI 요소
+    const overlay = document.getElementById('uploadOverlay');
+    const overlayFilename = document.getElementById('uploadFilename');
+    const overlayBar = document.getElementById('uploadProgressBar');
+    const overlayPct = document.getElementById('uploadProgressPct');
+    const overlayCount = document.getElementById('uploadCountLabel');
+
+    // 오버레이 표시
+    overlay.classList.add('active');
+
+    // 파일 등록 진행 (Cloudinary API 업로드 - XHR로 진행률 추적)
+    for (let i = 0; i < fileArray.length; i++) {
+        let file = fileArray[i];
+        if (isImageGroup) {
+            file = await resizeImage(file);
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_preset', 'filemover');
+
+        // 원본 파일명 유지 (확장자 제외한 이름만 public_id로 전송)
+        const originalNameBase = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+        formData.append('public_id', originalNameBase);
+
+        // dxcfrulyd 로 설정된 Cloud Name 전달
+        const cloudName = 'dxcfrulyd';
+
+        // 프로그레스 UI 업데이트
+        overlayFilename.innerText = file.name;
+        overlayBar.style.width = '0%';
+        overlayPct.innerText = '0%';
+        overlayCount.innerText = fileArray.length > 1 ? `파일 ${i + 1} / ${fileArray.length}` : '';
+
+        try {
+            // XHR을 Promise로 감싸 업로드 진행률 추적
+            const data = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const pct = Math.round((event.loaded / event.total) * 100);
+                        overlayBar.style.width = pct + '%';
+                        overlayPct.innerText = pct + '%';
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve(JSON.parse(xhr.responseText));
+                    } else {
+                        reject(new Error(`HTTP 오류: ${xhr.status}`));
+                    }
+                };
+
+                xhr.onerror = () => reject(new Error('네트워크 오류'));
+
+                xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`);
+                xhr.send(formData);
+            });
+
+            if (data.secure_url) {
+                totalUsedSpace += file.size;
+                groupSize += file.size;
+                // 안전한 클라우디너리 URL 보관 및 원본 배열명 보관
+                fileUrls.push(data.secure_url);
+                originalNames.push(file.name);
+            } else {
+                console.error("Cloudinary 응답 에러:", data);
+                alert("일부 파일 업로드에 실패했습니다.");
+            }
+        } catch (error) {
+            console.error("파일 업로드 에러:", error);
+            alert("일부 파일 전송에 실패했습니다.");
+        }
+    }
+
+    // 오버레이 숨김
+    overlay.classList.remove('active');
+
+    updateQuotaUI();
+
+    const sizeInMB = groupSize / (1024 * 1024);
+    let expirationDays = 30;
+    if (sizeInMB >= 50) expirationDays = 3;
+    else if (sizeInMB >= 10) expirationDays = 7;
+
+    const cardData = {
+        uid: auth.currentUser.uid,
+        type: isImageGroup ? 'image' : 'file',
+        content: fileUrls.length === 1 ? fileUrls[0] : fileUrls, // 다중 파일 배열 지원
+        originalNames: originalNames.length === 1 ? originalNames[0] : originalNames, // 파일명도 배열로 동일하게 보관
+        name: fileArray.length > 1 ? `${fileArray[0].name} 양식 외 ${fileArray.length - 1}건` : fileArray[0].name,
+        size: sizeInMB.toFixed(2),
+        expirationDays: expirationDays,
+        originalDuration: expirationDays,
+        uploadTime: new Date().getTime(),
+        fileCount: fileArray.length
+    };
+
+    // DB 기록
+    try {
+        const docRef = await addDoc(collection(db, "cards"), cardData);
+        createCard(cardData, docRef.id);
+    } catch (e) {
+        console.error("DB 문서 생성 에러: ", e);
+    }
+}
+
+function resizeImage(file) {
+    return new Promise((resolve) => {
+        const option = resizeOption.value;
+        if (option === 'original') {
+            resolve(file);
+            return;
+        }
+
+        let targetWidth = option === 'custom' ? parseInt(customWidthInput.value) : parseInt(option);
+        if (!targetWidth || isNaN(targetWidth)) targetWidth = 860;
+
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        img.onload = () => {
+            if (img.width <= targetWidth) {
+                resolve(file);
+                return;
+            }
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const ratio = targetWidth / img.width;
+            canvas.width = targetWidth;
+            canvas.height = img.height * ratio;
+
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((blob) => {
+                const resizedFile = new File([blob], file.name, {
+                    type: file.type,
+                    lastModified: Date.now()
+                });
+                resolve(resizedFile);
+            }, file.type, 0.9);
+        };
+    });
+}
+
+photoInput.addEventListener('change', (e) => {
+    handleFilesUpload(e.target.files, 'image');
+    photoInput.value = ''; // 동일 파일 재선택을 위해 초기화
+});
+
+generalFileInput.addEventListener('change', (e) => {
+    handleFilesUpload(e.target.files, 'file');
+    generalFileInput.value = '';
+});
+
+function updateQuotaUI() {
+    const mb = (totalUsedSpace / (1024 * 1024)).toFixed(2);
+    document.getElementById('quotaInfo').innerText = `현재 사용량: ${mb} MB / 100 MB`;
+}
+
+// === 필터 칩 이벤트 ===
+let currentFilter = 'all'; // 현재 활성 필터 상태 보관
+
+document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+        // 활성 상태 전환
+        document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+
+        currentFilter = chip.dataset.filter;
+        applyFilter(currentFilter);
+    });
+});
+
+function applyFilter(filter) {
+    const cards = document.querySelectorAll('.list-card');
+    cards.forEach(card => {
+        if (filter === 'all') {
+            card.style.display = '';
+        } else if (filter === 'text') {
+            // 메모(text 타입 중 link가 아닌 것)
+            card.style.display = card.dataset.cardType === 'memo' ? '' : 'none';
+        } else if (filter === 'link') {
+            card.style.display = card.dataset.cardType === 'link' ? '' : 'none';
+        } else if (filter === 'image') {
+            card.style.display = card.dataset.cardType === 'image' ? '' : 'none';
+        } else if (filter === 'file') {
+            card.style.display = card.dataset.cardType === 'file' ? '' : 'none';
+        }
+    });
+}
+
+// 날짜 포맷 함수 추가 (Ex: 2026.03.02. 22:21)
+function formatDate(timestamp) {
+    const d = new Date(timestamp);
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}. ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// 강제 파일 다운로드 헬퍼 함수 (Bypass 창열림)
+async function forceDownload(url, filename) {
+    try {
+        const response = await fetch(url);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        // Cloudinary URL에서 원본 파일명 추출 시도 (실패 시 기본값)
+        let downloadName = filename;
+        if (!downloadName) {
+            const urlParts = url.split('/');
+            downloadName = urlParts[urlParts.length - 1] || 'download_file';
+        }
+        a.download = downloadName;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(blobUrl);
+        a.remove();
+    } catch (error) {
+        console.error('다운로드 오류:', error);
+        // CORS 등으로 fetch 실패 시 대비 새 창 열기 (Fallback)
+        window.open(url, '_blank');
+    }
+}
+
+function createCard(data, docId = null) {
+    const container = document.getElementById('cardContainer');
+    const card = document.createElement('div');
+    card.className = 'list-card';
+    if (docId) card.dataset.id = docId;
+
+    // 뱃지 정보 결정
+    let badgeClass = 'badge-file';
+    let badgeText = 'FILE';
+
+    if (data.type === 'text') {
+        if (data.content.startsWith('http')) {
+            badgeClass = 'badge-link';
+            badgeText = 'WEB';
+            card.dataset.cardType = 'link';
+        } else {
+            badgeClass = 'badge-memo';
+            badgeText = 'MEMO';
+            card.dataset.cardType = 'memo';
+        }
+    } else if (data.type === 'image') {
+        badgeClass = 'badge-photo';
+        badgeText = 'PHOTO';
+        card.dataset.cardType = 'image';
+    } else {
+        card.dataset.cardType = 'file';
+    }
+
+    // 텍스트 가공
+    let titleText = data.name || '제목 없음';
+    let descText = '';
+
+    if (data.type === 'text') {
+        if (!data.name) {
+            titleText = badgeText === 'WEB' ? data.content : data.content.substring(0, 30) + (data.content.length > 30 ? '...' : '');
+        }
+        descText = data.content;
+    } else {
+        descText = `용량: ${data.size}MB${data.fileCount && data.fileCount > 1 ? ` (총 ${data.fileCount}건)` : ''}`;
+    }
+
+    const dateStr = formatDate(data.uploadTime);
+
+    // ── 1행: 뱃지(좌) + ⋮ 버튼(우) ──
+    const topRow = document.createElement('div');
+    topRow.className = 'card-top-row';
+
+    const badgeEl = document.createElement('span');
+    badgeEl.className = `card-badge ${badgeClass}`;
+    badgeEl.innerText = badgeText;
+
+    // ⋮ 버튼 + 삭제 메뉴
+    const moreBtnWrap = document.createElement('div');
+    moreBtnWrap.style.position = 'relative';
+    moreBtnWrap.innerHTML = `
+        <button class="action-icon-btn more-btn"><span class="material-symbols-outlined">more_vert</span></button>
+        <div class="delete-menu" style="display:none; position:absolute; right:0; top:100%; background:white; border:1px solid #ddd; border-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.1); z-index:10; min-width:80px;">
+            <button class="delete-action-btn" style="color:#dc3545; background:none; border:none; padding:10px 16px; width:100%; text-align:left; cursor:pointer; white-space:nowrap; font-size:13px;">삭제</button>
+        </div>
+    `;
+
+    topRow.appendChild(badgeEl);
+    topRow.appendChild(moreBtnWrap);
+    card.appendChild(topRow);
+
+    // ── 2~5행: 본문 영역 (제목·내용·날짜·만료) ──
+    const bodyDiv = document.createElement('div');
+    bodyDiv.className = 'card-body';
+    bodyDiv.innerHTML = `
+        <h4 class="card-title">${titleText}</h4>
+        <p class="card-desc desc-clamp">${descText}</p>
+        <span class="card-date">${dateStr}</span>
+        <div class="card-status"></div>
+    `;
+    card.appendChild(bodyDiv);
+
+    // 타이틀 클릭 이벤트
+    const titleEl = bodyDiv.querySelector('.card-title');
+    titleEl.style.cursor = 'pointer';
+    titleEl.title = data.type === 'text' && badgeText !== 'WEB' ? '클릭하여 메모 보기' : '클릭하여 열기 및 다운로드';
+    titleEl.addEventListener('click', () => {
+        if (data.type === 'text') {
+            if (badgeText === 'WEB') {
+                let url = data.content;
+                if (!url.match(/^https?:\/\//i)) url = 'http://' + url;
+                window.open(url, '_blank');
+            } else {
+                showMemoViewModal(data, docId);
+            }
+        } else {
+            // 단일이든 다중이든 항상 팝업 모달로 표시
+            let modalData = data;
+            if (!Array.isArray(data.content)) {
+                // 단일 파일을 배열로 래핑하여 모달에 전달
+                const fileName = data.originalNames || data.name || '파일';
+                modalData = {
+                    ...data,
+                    content: [data.content],
+                    originalNames: [fileName],
+                    fileCount: 1,
+                };
+            }
+            showMultiDownloadModal(modalData, badgeText);
+        }
+    });
+
+    // ⋮ 버튼 이벤트
+    const moreBtn = moreBtnWrap.querySelector('.more-btn');
+    const deleteMenu = moreBtnWrap.querySelector('.delete-menu');
+    const deleteBtn = moreBtnWrap.querySelector('.delete-action-btn');
+
+    moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isVisible = deleteMenu.style.display === 'block';
+        document.querySelectorAll('.delete-menu').forEach(m => m.style.display = 'none');
+        if (!isVisible) deleteMenu.style.display = 'block';
+    });
+
+    document.addEventListener('click', () => { deleteMenu.style.display = 'none'; });
+
+    deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        deleteMenu.style.display = 'none';
+        if (!confirm('정말 이 카드를 삭제하시겠습니까? (클라우드에서도 영구 삭제됩니다)')) return;
+        try {
+            if (docId) await deleteDoc(doc(db, 'cards', docId));
+            if (data.type !== 'text' && data.size) {
+                totalUsedSpace -= (parseFloat(data.size) * 1024 * 1024);
+                if (totalUsedSpace < 0) totalUsedSpace = 0;
+                updateQuotaUI();
+            }
+            card.remove();
+        } catch (error) {
+            console.error('삭제 중 오류 발생:', error);
+            alert('데이터 삭제에 실패했습니다.');
+        }
+    });
+
+    // 만료 텍스트 + 연장 버튼 (타이머 로직에서 사용)
+    const statusDiv = bodyDiv.querySelector('.card-status');
+    const extendBtn = document.createElement('button');
+    extendBtn.className = 'extend-btn';
+    extendBtn.innerText = '연장';
+    extendBtn.style.display = 'none';
+    statusDiv.after(extendBtn);
+
+    // alias (하위 타이머 로직 호환)
+    const statusContainer = bodyDiv;
+
+
+    container.insertBefore(card, container.firstChild); // 최신 항목이 위에 오도록 수정
+
+    // 현재 필터가 켜져 있으면 새 카드에도 즉시 적용
+    if (typeof currentFilter !== 'undefined' && currentFilter !== 'all') {
+        applyFilter(currentFilter);
+    }
+
+    // 3줄 축소 토글 버튼 동적 생성 제어 로직
+    // 요소가 렌더링된 이후에 높이를 측정하기 위해 약간의 지연 처리
+    setTimeout(() => {
+        const descEl = bodyDiv.querySelector('.card-desc');
+        if (descEl && descEl.scrollHeight > descEl.clientHeight) {
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'toggle-desc-btn';
+            toggleBtn.innerText = '자세히 보기';
+
+            toggleBtn.addEventListener('click', () => {
+                if (descEl.classList.contains('desc-clamp')) {
+                    descEl.classList.remove('desc-clamp');
+                    toggleBtn.innerText = '접기';
+                    card.style.height = 'auto'; // 리스트뷰 높이 자동 확장
+                } else {
+                    descEl.classList.add('desc-clamp');
+                    toggleBtn.innerText = '자세히 보기';
+                    card.style.height = '120px'; // 다시 기본 높이로 축소
+                }
+            });
+            // 설명 아래 껴넣기
+            descEl.parentElement.appendChild(toggleBtn);
+        }
+    }, 10);
+
+    // 타이머 로직 유지
+    if (data.expirationDays !== 'permanent') {
+        let expireTime = data.uploadTime + (data.expirationDays * 24 * 60 * 60 * 1000);
+
+        const interval = setInterval(() => {
+            const now = new Date().getTime();
+            const timeLeft = expireTime - now;
+
+            if (timeLeft <= 0) {
+                statusDiv.innerText = "삭제되었습니다.";
+                extendBtn.style.display = 'none';
+                clearInterval(interval);
+                return;
+            }
+
+            const hoursLeft = timeLeft / (1000 * 60 * 60);
+
+            if (hoursLeft < 24) {
+                statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
+            } else {
+                statusDiv.innerText = `${Math.floor(hoursLeft / 24)}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
+            }
+
+            if (hoursLeft <= 48) {
+                extendBtn.style.display = 'block';
+                statusDiv.style.color = '#e74c3c';
+                statusDiv.style.fontWeight = 'bold';
+            } else {
+                extendBtn.style.display = 'none';
+                statusDiv.style.color = '#555';
+                statusDiv.style.fontWeight = 'normal';
+            }
+        }, 1000);
+
+        extendBtn.onclick = () => {
+            expireTime = new Date().getTime() + (data.originalDuration * 24 * 60 * 60 * 1000);
+            alert(`${data.originalDuration}일로 기간이 연장되었습니다.`);
+        };
+    } else {
+        statusDiv.innerText = "영구 보관";
+        statusDiv.style.color = "#555";
+    }
+}
+
+// --- 기타 헬퍼 함수 및 모달 렌더링 ---
+function showMultiDownloadModal(data, badgeText) {
+    multiDownloadList.innerHTML = '';
+    const isPhoto = badgeText === 'PHOTO';
+    const urls = Array.isArray(data.content) ? data.content : [data.content];
+
+    // DB에 저장된 원본파일 배열 이용 (없으면 fallback 생성)
+    const names = Array.isArray(data.originalNames) ? data.originalNames : urls.map((url, i) => {
+        const urlParts = url.split('/');
+        return urlParts[urlParts.length - 1] || `file_${i + 1}`;
+    });
+
+    urls.forEach((url, i) => {
+        const li = document.createElement('li');
+        li.className = 'multi-download-item';
+
+        let iconHtml = '';
+        if (isPhoto) {
+            iconHtml = `<img src="${url}" alt="thumbnail">`;
+        } else {
+            iconHtml = `<span class="material-symbols-outlined">insert_drive_file</span>`;
+        }
+
+        const fileName = names[i] || `file_${i + 1}`;
+
+        li.innerHTML = `
+            ${iconHtml}
+            <span class="multi-download-item-name">${fileName}</span>
+            <span class="material-symbols-outlined" style="margin-right: 0; color: #3498db;">download</span>
+        `;
+
+        // 아이템 클릭 시 개별 파일 다운로드
+        li.addEventListener('click', () => {
+            forceDownload(url, fileName);
+            // 클릭 시 시각적 피드백 제공
+            li.style.backgroundColor = '#e8f4fd';
+            setTimeout(() => li.style.backgroundColor = '', 300);
+        });
+
+        multiDownloadList.appendChild(li);
+    });
+
+    multiDownloadTitle.innerText = isPhoto ? '사진 목록' : '파일 목록';
+    multiDownloadModal.style.display = 'flex';
+}
+
+// 메모 내용 전체를 보여주는 뷰어 모달을 띄우는 함수
+function showMemoViewModal(data, docId = null) {
+    const memoViewModal = document.getElementById('memoViewModal');
+    const memoViewTitle = document.getElementById('memoViewTitle');
+    const memoViewContent = document.getElementById('memoViewContent');
+    const memoViewCopyBtn = document.getElementById('memoViewCopyBtn');
+    const memoViewSaveBtn = document.getElementById('memoViewSaveBtn');
+    const closeMemoViewBtn = document.getElementById('closeMemoViewBtn');
+
+    // 내용 채우기
+    memoViewTitle.innerText = data.name || '제목없음';
+    memoViewContent.value = data.content;
+
+    // 닫기 버튼
+    closeMemoViewBtn.onclick = () => memoViewModal.style.display = 'none';
+
+    // 복사 버튼 (항상 현재 textarea 내용 기준으로 복사)
+    memoViewCopyBtn.onclick = () => {
+        navigator.clipboard.writeText(memoViewContent.value).then(() => {
+            memoViewCopyBtn.innerText = '복사됨 ✓';
+            memoViewCopyBtn.style.background = '#28a745';
+            setTimeout(() => {
+                memoViewCopyBtn.innerText = '내용 복사';
+                memoViewCopyBtn.style.background = '';
+            }, 1500);
+        }).catch(err => console.error('복사 실패:', err));
+    };
+
+    // 저장 버튼 - Firestore DB 업데이트 및 카드 UI 갱신
+    memoViewSaveBtn.onclick = async () => {
+        const newContent = memoViewContent.value.trim();
+        if (!newContent) return;
+        if (newContent === data.content) {
+            memoViewModal.style.display = 'none';
+            return;
+        }
+
+        memoViewSaveBtn.disabled = true;
+        memoViewSaveBtn.innerText = '저장 중...';
+
+        try {
+            if (docId) {
+                // Firestore 문서 업데이트
+                await updateDoc(doc(db, 'cards', docId), { content: newContent });
+            }
+
+            // data 객체 메모리 내 갱신 (다음 클릭에 반영)
+            data.content = newContent;
+
+            // 카드 DOM에서 desc 영역 즉시 갱신
+            const cardEl = document.querySelector(`.list-card[data-id="${docId}"]`);
+            if (cardEl) {
+                const descEl = cardEl.querySelector('.card-desc');
+                if (descEl) descEl.innerText = newContent;
+            }
+
+            memoViewSaveBtn.innerText = '저장됨 ✓';
+            memoViewSaveBtn.style.background = '#28a745';
+            setTimeout(() => {
+                memoViewModal.style.display = 'none';
+                memoViewSaveBtn.innerText = '저장';
+                memoViewSaveBtn.style.background = '';
+                memoViewSaveBtn.disabled = false;
+            }, 1000);
+        } catch (err) {
+            console.error('저장 실패:', err);
+            alert('저장에 실패했습니다.');
+            memoViewSaveBtn.innerText = '저장';
+            memoViewSaveBtn.disabled = false;
+        }
+    };
+
+    memoViewModal.style.display = 'flex';
+}
