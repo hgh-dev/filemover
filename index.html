@@ -826,8 +826,21 @@
             </div>
 
             <div class="main-content">
-                <div id="quotaInfo" style="text-align: right; margin-bottom: 15px; font-size: 0.7em; color: #666;">현재
-                    사용량: 0 MB / 100 MB</div>
+                <div
+                    style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 15px;">
+                    <div id="quotaInfo" style="font-size: 0.7em; color: #666;">현재 사용량: 0 MB / 100 MB</div>
+                    <button id="resetAllBtn" title="모든 카드 초기화" style="
+                        display: flex; align-items: center; gap: 3px;
+                        background: none; border: 1px solid #e0e0e0;
+                        border-radius: 6px; padding: 3px 8px;
+                        font-size: 0.7em; color: #999; cursor: pointer;
+                        transition: background 0.2s, color 0.2s, border-color 0.2s;
+                    " onmouseover="this.style.background='#fff0f0';this.style.color='#dc3545';this.style.borderColor='#dc3545';"
+                        onmouseout="this.style.background='none';this.style.color='#999';this.style.borderColor='#e0e0e0';">
+                        <span class="material-symbols-outlined" style="font-size: 14px;">delete_sweep</span>
+                        초기화
+                    </button>
+                </div>
                 <div id="cardContainer" class="card-container">
                 </div>
             </div> <!-- end of main-content -->
@@ -868,7 +881,7 @@
                 <div class="modal-content">
                     <h3>메모 추가</h3>
                     <input type="text" id="memoTitleInput" placeholder="제목을 입력하세요 (선택 사항)">
-                    <textarea id="memoInput" rows="5" placeholder="메모 내용을 상세히 입력하세요"></textarea>
+                    <textarea id="memoInput" rows="5" placeholder="메모 내용을 입력하세요"></textarea>
                     <div class="modal-actions">
                         <button class="cancel-btn" id="cancelMemoBtn">취소</button>
                         <button class="save-btn" id="saveMemoBtn">저장</button>

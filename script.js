@@ -419,7 +419,8 @@ function resizeImage(file) {
 
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             canvas.toBlob((blob) => {
-                const resizedFile = new File([blob], file.name, {
+                // 리사이즈된 파일명: "resize_원본파일명" 형식
+                const resizedFile = new File([blob], `resize_${file.name}`, {
                     type: file.type,
                     lastModified: Date.now()
                 });
@@ -443,6 +444,30 @@ function updateQuotaUI() {
     const mb = (totalUsedSpace / (1024 * 1024)).toFixed(2);
     document.getElementById('quotaInfo').innerText = `현재 사용량: ${mb} MB / 100 MB`;
 }
+
+// 초기화 버튼: 현재 사용자의 모든 카드 삭제
+document.getElementById('resetAllBtn').addEventListener('click', async () => {
+    if (!auth.currentUser) return;
+    if (!confirm('모든 카드를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+
+    const uid = auth.currentUser.uid;
+    try {
+        // Firestore에서 현재 사용자의 카드 문서 전체 조회 후 삭제
+        const q = query(collection(db, 'cards'), where('uid', '==', uid));
+        const snapshot = await getDocs(q);
+        const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'cards', d.id)));
+        await Promise.all(deletePromises);
+
+        // UI 상태 초기화
+        document.getElementById('cardContainer').innerHTML = '';
+        totalUsedSpace = 0;
+        updateQuotaUI();
+    } catch (error) {
+        console.error('전체 삭제 중 오류 발생:', error);
+        alert('초기화에 실패했습니다.');
+    }
+});
+
 
 // === 필터 칩 이벤트 ===
 let currentFilter = 'all'; // 현재 활성 필터 상태 보관
