@@ -99,10 +99,10 @@ onAuthStateChanged(auth, (user) => {
 
 // === 2차 방어: 고스트 카드 청소 (자가 치유) ===
 async function performGhostDataCleanup(cardData, docId) {
-    if (cardData.type === 'text') return;
+    if (cardData.type === 'text') return 0; // 💡 변경: 검사 패스 시 0 반환
 
     let urls = Array.isArray(cardData.content) ? cardData.content : [cardData.content];
-    if (urls.length === 0) return;
+    if (urls.length === 0) return 0; // 💡 변경: 검사 패스 시 0 반환
 
     const targetUrl = urls[0];
 
@@ -128,13 +128,16 @@ async function performGhostDataCleanup(cardData, docId) {
                 if (totalUsedSpace < 0) totalUsedSpace = 0;
                 updateQuotaUI();
             }
+            return 1; // 💡 ★★★ 추가: 카드를 삭제했으면 1을 반환
         }
     } catch (error) {
         console.warn(`파일 검사 중 네트워크 오류 (무시됨): ${targetUrl}`);
     }
+    
+    return 0; // 💡 ★★★ 추가: 파일이 잘 살아있으면 0 반환
 }
 
-// === 1차 방어: 접속 시 일괄 청소 로직 ===
+// === 1차 방어 & 2차 방어 통합: 접속 시 일괄 청소 및 로드 로직 ===
 async function loadUserData(uid) {
     const container = document.getElementById('cardContainer');
     container.innerHTML = '';
@@ -149,6 +152,7 @@ async function loadUserData(uid) {
         const cardsToRender = [];
         const now = new Date().getTime();
 
+        // 1. 모든 카드를 돌면서 만료 검사 진행 (1차 방어)
         for (const docSnap of querySnapshot.docs) {
             const cardData = docSnap.data();
             const docId = docSnap.id;
@@ -185,15 +189,20 @@ async function loadUserData(uid) {
 
         cardsToRender.sort((a, b) => a.uploadTime - b.uploadTime);
 
+        // 💡 ★★★ 고스트 청소 작업(Promise)들을 모아둘 배열 생성
+        const ghostCleanupPromises = [];
+
         cardsToRender.forEach(cardData => {
             createCard(cardData, cardData.id);
             if (cardData.size) {
                 totalUsedSpace += (parseFloat(cardData.size) * 1024 * 1024);
             }
-            performGhostDataCleanup(cardData, cardData.id);
+            // 💡 ★★★ 청소 함수의 실행 결과를 배열에 담습니다. (2차 방어)
+            ghostCleanupPromises.push(performGhostDataCleanup(cardData, cardData.id));
         });
         updateQuotaUI();
 
+        // 1차 방어 알림: 기간 만료 자동 삭제 보고
         if (expiredCount > 0) {
             let alertMsg = `기간이 만료되어 ${expiredCount}개의 데이터가 자동 삭제되었습니다.\n`;
             if (expiredCount === 1) {
@@ -208,6 +217,19 @@ async function loadUserData(uid) {
                 alert(alertMsg);
             }, 300);
         }
+
+        // 💡 ★★★ 2차 방어 알림: 고스트 카드 삭제 보고 ★★★
+        Promise.all(ghostCleanupPromises).then(results => {
+            // results 배열에 담긴 삭제 결과(1 또는 0)들을 모두 더합니다.
+            const ghostDeletedCount = results.reduce((sum, current) => sum + current, 0);
+            
+            if (ghostDeletedCount > 0) {
+                // 1차 만료 알림과 겹쳐서 안 보이는 현상을 막기 위해 0.8초 딜레이를 줍니다.
+                setTimeout(() => {
+                    alert(`${ghostDeletedCount}건의 카드가 파일이 존재하지 않아 삭제되었습니다.`);
+                }, 800);
+            }
+        });
 
     } catch (error) {
         console.error("데이터 로드 중 오류 발생:", error);
@@ -780,7 +802,7 @@ function createCard(data, docId = null) {
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         deleteMenu.style.display = 'none';
-        if (!confirm('정말 이 카드를 삭제하시겠습니까? (클라우드에서도 영구 삭제됩니다)')) return;
+        if (!confirm('정말 이 카드를 삭제하시겠습니까?')) return;
         
         try {
             if (data.type !== 'text' && data.publicIds) {
@@ -861,7 +883,7 @@ function createCard(data, docId = null) {
             if (hoursLeft < 24) {
                 statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
             } else {
-                statusDiv.innerText = `${Math.floor(hoursLeft / 24)}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
+                statusDiv.innerText = `${Math.floor(hoursLeft / 24) + 1}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
             }
 
             if (hoursLeft <= 48) {
