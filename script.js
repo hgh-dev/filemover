@@ -66,7 +66,6 @@ const linkInput = document.getElementById('linkInput');
 const saveLinkBtn = document.getElementById('saveLinkBtn');
 const cancelLinkBtn = document.getElementById('cancelLinkBtn');
 
-// 다중 다운로드 모달 요소
 const multiDownloadModal = document.getElementById('multiDownloadModal');
 const closeMultiDownloadBtn = document.getElementById('closeMultiDownloadBtn');
 const multiDownloadList = document.getElementById('multiDownloadList');
@@ -90,44 +89,140 @@ onAuthStateChanged(auth, (user) => {
         popupName.innerText = user.displayName || '사용자';
         popupEmail.innerText = user.email || '';
 
-        // 데이터 불러오기 (Read)
         loadUserData(user.uid);
     } else {
         loginScreen.style.display = 'flex';
         appContent.style.display = 'none';
-        document.getElementById('cardContainer').innerHTML = ''; // 초기화
+        document.getElementById('cardContainer').innerHTML = ''; 
     }
 });
 
+// === 2차 방어: 고스트 카드 청소 (자가 치유) ===
+async function performGhostDataCleanup(cardData, docId) {
+    if (cardData.type === 'text') return;
+
+    let urls = Array.isArray(cardData.content) ? cardData.content : [cardData.content];
+    if (urls.length === 0) return;
+
+    const targetUrl = urls[0];
+
+    try {
+        const response = await fetch(targetUrl, { method: 'HEAD' });
+
+        if (response.status === 404) {
+            console.log(`🧹 [고스트 청소 완료] 파일 없음 확인. 카드 삭제됨: ${cardData.name}`);
+            await deleteDoc(doc(db, 'cards', docId));
+
+            const cardEl = document.querySelector(`.list-card[data-id="${docId}"]`);
+            if (cardEl) {
+                cardEl.style.transition = 'opacity 0.4s ease, height 0.4s ease, padding 0.4s ease';
+                cardEl.style.opacity = '0';
+                cardEl.style.height = '0px';
+                cardEl.style.padding = '0px';
+                cardEl.style.overflow = 'hidden';
+                setTimeout(() => cardEl.remove(), 400);
+            }
+
+            if (cardData.size) {
+                totalUsedSpace -= (parseFloat(cardData.size) * 1024 * 1024);
+                if (totalUsedSpace < 0) totalUsedSpace = 0;
+                updateQuotaUI();
+            }
+        }
+    } catch (error) {
+        console.warn(`파일 검사 중 네트워크 오류 (무시됨): ${targetUrl}`);
+    }
+}
+
+// ★★★ 1차 방어: 접속 시 일괄 청소 로직 추가 ★★★
 async function loadUserData(uid) {
     const container = document.getElementById('cardContainer');
     container.innerHTML = '';
     totalUsedSpace = 0;
 
+    let expiredCount = 0;
+    let expiredNames = [];
+
     try {
         const q = query(collection(db, "cards"), where("uid", "==", uid));
         const querySnapshot = await getDocs(q);
-        const cards = [];
-        querySnapshot.forEach((doc) => {
-            cards.push({ id: doc.id, ...doc.data() });
-        });
+        const cardsToRender = [];
+        const now = new Date().getTime();
 
-        // 최신 생성순 정렬
-        cards.sort((a, b) => a.uploadTime - b.uploadTime);
+        // 1. 모든 카드를 돌면서 만료 검사 진행
+        for (const docSnap of querySnapshot.docs) {
+            const cardData = docSnap.data();
+            const docId = docSnap.id;
 
-        cards.forEach(cardData => {
+            let isExpired = false;
+            // 영구 보관이 아닌 카드만 시간 검사
+            if (cardData.expirationDays !== 'permanent') {
+                const expireTime = cardData.uploadTime + (cardData.expirationDays * 24 * 60 * 60 * 1000);
+                if (now > expireTime) {
+                    isExpired = true;
+                }
+            }
+
+            if (isExpired) {
+                // [만료됨] -> 클라우디너리 삭제 후 DB 삭제
+                console.log(`🧨 [자동 폭파] 기간 만료 카드: ${cardData.name}`);
+                
+                if (cardData.type !== 'text' && cardData.publicIds) {
+                    const rType = cardData.type === 'image' ? 'image' : 'raw';
+                    const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
+                    for (const pid of pIds) {
+                        await deleteCloudinaryFile(pid, rType);
+                    }
+                }
+                
+                await deleteDoc(doc(db, 'cards', docId));
+
+                // 알림용 데이터 수집
+                expiredCount++;
+                if (expiredNames.length < 2) {
+                    expiredNames.push(cardData.name || '이름 없음');
+                }
+            } else {
+                // [안 만료됨] -> 화면에 그릴 목록에 추가
+                cardsToRender.push({ id: docId, ...cardData });
+            }
+        }
+
+        // 2. 살아남은 카드들만 화면에 그리기
+        cardsToRender.sort((a, b) => a.uploadTime - b.uploadTime);
+
+        cardsToRender.forEach(cardData => {
             createCard(cardData, cardData.id);
             if (cardData.size) {
                 totalUsedSpace += (parseFloat(cardData.size) * 1024 * 1024);
             }
+            // 그린 후, 혹시 수동으로 지운 파일인지 고스트 검사 (2차 방어)
+            performGhostDataCleanup(cardData, cardData.id);
         });
         updateQuotaUI();
+
+        // 3. 친절한 알림 띄우기 (청소가 1건이라도 발생했을 경우)
+        if (expiredCount > 0) {
+            let alertMsg = `기간이 만료되어 ${expiredCount}개의 데이터가 자동 삭제되었습니다.\n`;
+            if (expiredCount === 1) {
+                alertMsg += `(삭제된 항목: ${expiredNames[0]})`;
+            } else if (expiredCount === 2) {
+                alertMsg += `(삭제된 항목: ${expiredNames.join(', ')})`;
+            } else {
+                alertMsg += `(삭제된 항목: ${expiredNames.join(', ')} 외 ${expiredCount - 2}건)`;
+            }
+            
+            // 화면 렌더링이 안 끊기도록 약간의 지연 후 알림
+            setTimeout(() => {
+                alert(alertMsg);
+            }, 300);
+        }
+
     } catch (error) {
         console.error("데이터 로드 중 오류 발생:", error);
     }
 }
 
-// 로그인 및 로그아웃 이벤트
 loginBtn.addEventListener('click', () => {
     signInWithPopup(auth, provider).catch(error => {
         console.error("로그인 에러:", error);
@@ -141,19 +236,16 @@ logoutBtn.addEventListener('click', () => {
     });
 });
 
-// 프로필 팝업 토글
 profileBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     profilePopup.style.display = profilePopup.style.display === 'none' ? 'flex' : 'none';
 });
 
-// 추가 버튼(+) 팝업 토글
 mainAddBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     addMenuPopup.style.display = addMenuPopup.style.display === 'none' ? 'flex' : 'none';
 });
 
-// 외부 클릭 시 모든 팝업 닫기
 document.addEventListener('click', (e) => {
     if (profilePopup && !profilePopup.contains(e.target) && !profileBtn.contains(e.target)) {
         profilePopup.style.display = 'none';
@@ -163,7 +255,6 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// === 메뉴 액션 등록 ===
 menuAddMemo.addEventListener('click', () => {
     addMenuPopup.style.display = 'none';
     memoInput.value = '';
@@ -196,11 +287,9 @@ menuAddFile.addEventListener('click', () => {
     generalFileInput.click();
 });
 
-// === 모달 닫기 버튼 ===
 cancelMemoBtn.addEventListener('click', () => memoModal.style.display = 'none');
 cancelLinkBtn.addEventListener('click', () => linkModal.style.display = 'none');
 
-// === 모달 저장 버튼 ===
 saveMemoBtn.addEventListener('click', async () => {
     const title = memoTitleInput.value.trim();
     const text = memoInput.value.trim();
@@ -258,21 +347,18 @@ saveLinkBtn.addEventListener('click', async () => {
     }
 });
 
-// ★★★ 추가된 해시(암호화) 함수: Cloudinary 서명용 ★★★
 async function sha1(str) {
     const buffer = new TextEncoder("utf-8").encode(str);
     const digest = await crypto.subtle.digest("SHA-1", buffer);
     return Array.from(new Uint8Array(digest)).map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
-// ★★★ 추가된 Cloudinary 파일 삭제 함수 ★★★
 async function deleteCloudinaryFile(publicId, resourceType = 'image') {
     const cloudName = 'dxcfrulyd';
     const apiKey = '822956219941674';
     const apiSecret = 'rZhoHQ7DOnbmIh0iZgUNfTfzuUs';
     const timestamp = Math.floor(Date.now() / 1000);
 
-    // 보안 서명 생성: public_id, timestamp, api_secret을 조합하여 암호화
     const signatureString = `public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
     const signature = await sha1(signatureString);
 
@@ -282,7 +368,6 @@ async function deleteCloudinaryFile(publicId, resourceType = 'image') {
     formData.append('timestamp', timestamp);
     formData.append('signature', signature);
 
-    // 삭제를 위한 Cloudinary API 호출
     const url = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`;
 
     try {
@@ -294,7 +379,6 @@ async function deleteCloudinaryFile(publicId, resourceType = 'image') {
     }
 }
 
-// === 다중 파일 처리 함수 ===
 let totalUsedSpace = 0;
 const MAX_SPACE = 100 * 1024 * 1024;
 
@@ -316,7 +400,7 @@ async function handleFilesUpload(files, type) {
     let isImageGroup = type === 'image';
     let fileUrls = [];
     let originalNames = [];
-    let publicIds = []; // ★★★ public_id 저장을 위한 배열 추가
+    let publicIds = []; 
     let groupSize = 0;
 
     const overlay = document.getElementById('uploadOverlay');
@@ -378,7 +462,7 @@ async function handleFilesUpload(files, type) {
                 groupSize += file.size;
                 fileUrls.push(data.secure_url);
                 originalNames.push(file.name);
-                publicIds.push(data.public_id); // ★★★ DB에 저장할 public_id 보관
+                publicIds.push(data.public_id); 
             } else {
                 console.error("Cloudinary 응답 에러:", data);
                 alert("일부 파일 업로드에 실패했습니다.");
@@ -403,7 +487,7 @@ async function handleFilesUpload(files, type) {
         type: isImageGroup ? 'image' : 'file',
         content: fileUrls.length === 1 ? fileUrls[0] : fileUrls, 
         originalNames: originalNames.length === 1 ? originalNames[0] : originalNames, 
-        publicIds: publicIds.length === 1 ? publicIds[0] : publicIds, // ★★★ DB에 publicId 추가
+        publicIds: publicIds.length === 1 ? publicIds[0] : publicIds, 
         name: fileArray.length > 1 ? `${fileArray[0].name} 양식 외 ${fileArray.length - 1}건` : fileArray[0].name,
         size: sizeInMB.toFixed(2),
         expirationDays: expirationDays,
@@ -471,7 +555,6 @@ function updateQuotaUI() {
     document.getElementById('quotaInfo').innerText = `현재 사용량: ${mb} MB / 100 MB`;
 }
 
-// ★★★ 초기화 버튼 로직 수정 (클라우디너리 삭제 포함) ★★★
 document.getElementById('resetAllBtn').addEventListener('click', async () => {
     if (!auth.currentUser) return;
     if (!confirm('모든 카드를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
@@ -483,7 +566,6 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
         
         for (const d of snapshot.docs) {
             const cardData = d.data();
-            // 1. 실제 파일이 있으면 Cloudinary 삭제 진행
             if (cardData.type !== 'text' && cardData.publicIds) {
                 const rType = cardData.type === 'image' ? 'image' : 'raw';
                 const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
@@ -491,7 +573,6 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
                     await deleteCloudinaryFile(pid, rType);
                 }
             }
-            // 2. DB 카드 삭제
             await deleteDoc(doc(db, 'cards', d.id));
         }
 
@@ -504,7 +585,6 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
     }
 });
 
-// === 필터 칩 이벤트 ===
 let currentFilter = 'all'; 
 
 document.querySelectorAll('.filter-chip').forEach(chip => {
@@ -692,16 +772,13 @@ function createCard(data, docId = null) {
 
     document.addEventListener('click', () => { deleteMenu.style.display = 'none'; });
 
-    // ★★★ 개별 카드 삭제 로직 수정 (클라우디너리 삭제 포함) ★★★
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         deleteMenu.style.display = 'none';
         if (!confirm('정말 이 카드를 삭제하시겠습니까? (클라우드에서도 영구 삭제됩니다)')) return;
         
         try {
-            // 1. 실제 파일이 있는 경우 Cloudinary에서 삭제
             if (data.type !== 'text' && data.publicIds) {
-                // Cloudinary에서는 이미지는 'image', 일반 파일은 'raw'로 분류합니다.
                 const rType = data.type === 'image' ? 'image' : 'raw';
                 const pIds = Array.isArray(data.publicIds) ? data.publicIds : [data.publicIds];
                 
@@ -710,10 +787,8 @@ function createCard(data, docId = null) {
                 }
             }
 
-            // 2. Firebase DB에서 삭제
             if (docId) await deleteDoc(doc(db, 'cards', docId));
             
-            // 3. UI 용량 반영
             if (data.type !== 'text' && data.size) {
                 totalUsedSpace -= (parseFloat(data.size) * 1024 * 1024);
                 if (totalUsedSpace < 0) totalUsedSpace = 0;
@@ -761,7 +836,7 @@ function createCard(data, docId = null) {
         }
     }, 10);
 
-    // ★★★ 타이머 및 기간 연장 로직 수정 ★★★
+    // ★★★ 타이머 문구 수정: 앱 실행 중에 만료될 경우를 대비 ★★★
     if (data.expirationDays !== 'permanent') {
         let expireTime = data.uploadTime + (data.expirationDays * 24 * 60 * 60 * 1000);
 
@@ -770,7 +845,8 @@ function createCard(data, docId = null) {
             const timeLeft = expireTime - now;
 
             if (timeLeft <= 0) {
-                statusDiv.innerText = "삭제되었습니다.";
+                // 실시간으로 0초가 되면, 새로고침 시 청소된다는 걸 알려줌
+                statusDiv.innerText = "만료됨 (새로고침 시 자동 정리됩니다)";
                 extendBtn.style.display = 'none';
                 clearInterval(interval);
                 return;
@@ -779,9 +855,9 @@ function createCard(data, docId = null) {
             const hoursLeft = timeLeft / (1000 * 60 * 60);
 
             if (hoursLeft < 24) {
-                statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
+                statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후에 ${data.type === 'image' ? '사진' : '파일'}이 만료됩니다.`;
             } else {
-                statusDiv.innerText = `${Math.floor(hoursLeft / 24)}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
+                statusDiv.innerText = `${Math.floor(hoursLeft / 24)}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 만료됩니다.`;
             }
 
             if (hoursLeft <= 48) {
@@ -795,7 +871,6 @@ function createCard(data, docId = null) {
             }
         }, 1000);
 
-        // 연장 버튼 클릭 시 DB의 업로드 시간(uploadTime) 자체를 갱신
         extendBtn.onclick = async () => {
             const newUploadTime = new Date().getTime();
             
@@ -806,12 +881,11 @@ function createCard(data, docId = null) {
                     });
                 }
                 
-                // 브라우저 타이머에도 바로 반영
                 data.uploadTime = newUploadTime;
                 expireTime = newUploadTime + (data.originalDuration * 24 * 60 * 60 * 1000);
                 
                 alert(`${data.originalDuration}일로 기간이 연장되었습니다.`);
-                extendBtn.style.display = 'none'; // 연장했으니 버튼 숨김
+                extendBtn.style.display = 'none'; 
             } catch (error) {
                 console.error("기간 연장 실패:", error);
                 alert("기간 연장에 실패했습니다.");
