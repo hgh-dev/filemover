@@ -1,7 +1,7 @@
-// Firebase SDK 모듈 임포트 (CDN 방식)
+// Firebase SDK 모듈 임포트 (CDN 방식) - 💡 getDoc 추가됨
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 // TODO: 본인의 Firebase 프로젝트 설정값으로 교체해야 합니다.
 const firebaseConfig = {
@@ -30,6 +30,7 @@ const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
 // DOM 요소 
+const loadingScreen = document.getElementById('loadingScreen');
 const loginScreen = document.getElementById('loginScreen');
 const appContent = document.getElementById('appContent');
 const loginBtn = document.getElementById('loginBtn');
@@ -71,11 +72,123 @@ const closeMultiDownloadBtn = document.getElementById('closeMultiDownloadBtn');
 const multiDownloadList = document.getElementById('multiDownloadList');
 const multiDownloadTitle = document.getElementById('multiDownloadTitle');
 
-closeMultiDownloadBtn.addEventListener('click', () => multiDownloadModal.style.display = 'none');
+closeMultiDownloadBtn.addEventListener('click', () => {
+    multiDownloadModal.style.display = 'none';
+    // 만약 공유 모드로 들어왔다가 창을 닫으면 로그인 화면으로 돌아가게 함
+    if (new URLSearchParams(window.location.search).get('share') && !auth.currentUser) {
+        loginScreen.style.display = 'flex';
+    }
+});
 
+// ==========================================
+// ★★★ [신규] 공유 링크 손님(Guest) 모드 감지 ★★★
+// ==========================================
+const urlParams = new URLSearchParams(window.location.search);
+const shareId = urlParams.get('share');
+let isGuestMode = false;
+
+if (shareId) {
+    isGuestMode = true;
+    loginScreen.style.display = 'none';
+    
+    // index.html에 추가하신 loadingScreen이 있다면 표시합니다
+    if (loadingScreen) {
+        loadingScreen.style.display = 'flex';
+    }
+    
+    handleShareLink(shareId);
+}
+
+// ★ 공유 링크 데이터 불러오기 함수
+async function handleShareLink(id) {
+    try {
+        const docRef = doc(db, 'cards', id);
+        const docSnap = await getDoc(docRef);
+        
+        if (loadingScreen) loadingScreen.style.display = 'none';
+
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            // 손님에게 해당 카드의 모달창 띄우기 (마지막 파라미터 true = 공유 모드)
+            if (data.type === 'text') {
+                showMemoViewModal(data, id, true);
+            } else {
+                showMultiDownloadModal(data, data.type === 'image' ? 'PHOTO' : 'FILE', true);
+            }
+        } else {
+            alert('만료되었거나 원본 작성자가 삭제한 공유 링크입니다.');
+            loginScreen.style.display = 'flex';
+        }
+    } catch (e) {
+        console.error("공유 링크 오류:", e);
+        if (loadingScreen) loadingScreen.style.display = 'none';
+        alert("링크를 불러오는데 실패했습니다. (권한 오류일 수 있습니다.)");
+        loginScreen.style.display = 'flex';
+    }
+}
+
+// ★ 공유받은 카드를 내 앱(DB)에 복사해서 저장하는 함수
+async function saveSharedCardToMyApp(data) {
+    // 1. 로그인이 안 되어있으면 구글 로그인 팝업 띄우기
+    if (!auth.currentUser) {
+        try {
+            await signInWithPopup(auth, provider);
+        } catch (e) {
+            alert("저장하려면 로그인이 필요합니다.");
+            return;
+        }
+    }
+
+    if (data.uid === auth.currentUser.uid) {
+        alert("이미 선생님의 계정에 있는 파일입니다!");
+        return;
+    }
+
+    // 2. 내 DB에 저장할 '사본' 데이터 만들기
+    // 중요: isSharedCopy 꼬리표를 붙여서 삭제 시 원본 클라우드 파일을 건드리지 않게 방어!
+    const newCardData = {
+        uid: auth.currentUser.uid,
+        type: data.type,
+        content: data.content,
+        originalNames: data.originalNames || data.name,
+        name: `[공유받음] ${data.name || '파일'}`,
+        size: data.size,
+        expirationDays: 'permanent', // 공유받은 링크는 영구보관 처리
+        uploadTime: new Date().getTime(),
+        fileCount: data.fileCount || 1,
+        isSharedCopy: true 
+    };
+
+    try {
+        await addDoc(collection(db, "cards"), newCardData);
+        alert("선생님의 File Mover에 성공적으로 보관되었습니다!\n이제 언제 어디서든 다운로드할 수 있습니다.");
+        
+        // 팝업들 닫고 내 메인 화면으로 이동
+        document.getElementById('memoViewModal').style.display = 'none';
+        document.getElementById('multiDownloadModal').style.display = 'none';
+        
+        // URL에서 share 파라미터 지우기 (원래 앱 주소로 깔끔하게 변경)
+        window.history.replaceState({}, document.title, window.location.pathname);
+        isGuestMode = false;
+        
+        // 내 데이터 다시 불러오기
+        appContent.style.display = 'flex';
+        loadUserData(auth.currentUser.uid);
+    } catch (e) {
+        console.error("저장 실패", e);
+        alert("보관에 실패했습니다.");
+    }
+}
+
+// ==========================================
 // 인증 상태 감지 및 UI 전환
+// ==========================================
 onAuthStateChanged(auth, (user) => {
+    // 손님 모드로 URL 접속 중일 땐 메인화면 로딩 패스
+    if (isGuestMode) return; 
+
     if (user) {
+        if (loadingScreen) loadingScreen.style.display = 'none';
         loginScreen.style.display = 'none';
         appContent.style.display = 'flex';
 
@@ -99,10 +212,10 @@ onAuthStateChanged(auth, (user) => {
 
 // === 2차 방어: 고스트 카드 청소 (자가 치유) ===
 async function performGhostDataCleanup(cardData, docId) {
-    if (cardData.type === 'text') return 0; // 💡 변경: 검사 패스 시 0 반환
-
+    if (cardData.type === 'text') return 0; 
+    
     let urls = Array.isArray(cardData.content) ? cardData.content : [cardData.content];
-    if (urls.length === 0) return 0; // 💡 변경: 검사 패스 시 0 반환
+    if (urls.length === 0) return 0; 
 
     const targetUrl = urls[0];
 
@@ -123,21 +236,21 @@ async function performGhostDataCleanup(cardData, docId) {
                 setTimeout(() => cardEl.remove(), 400);
             }
 
-            if (cardData.size) {
+            // 공유받은 사본은 내 용량을 차지하지 않으므로 계산에서 제외
+            if (cardData.size && !cardData.isSharedCopy) { 
                 totalUsedSpace -= (parseFloat(cardData.size) * 1024 * 1024);
                 if (totalUsedSpace < 0) totalUsedSpace = 0;
                 updateQuotaUI();
             }
-            return 1; // 💡 ★★★ 추가: 카드를 삭제했으면 1을 반환
+            return 1;
         }
     } catch (error) {
         console.warn(`파일 검사 중 네트워크 오류 (무시됨): ${targetUrl}`);
     }
-    
-    return 0; // 💡 ★★★ 추가: 파일이 잘 살아있으면 0 반환
+    return 0; 
 }
 
-// === 1차 방어 & 2차 방어 통합: 접속 시 일괄 청소 및 로드 로직 ===
+// === 1차 방어: 접속 시 일괄 청소 로직 ===
 async function loadUserData(uid) {
     const container = document.getElementById('cardContainer');
     container.innerHTML = '';
@@ -152,7 +265,6 @@ async function loadUserData(uid) {
         const cardsToRender = [];
         const now = new Date().getTime();
 
-        // 1. 모든 카드를 돌면서 만료 검사 진행 (1차 방어)
         for (const docSnap of querySnapshot.docs) {
             const cardData = docSnap.data();
             const docId = docSnap.id;
@@ -166,9 +278,8 @@ async function loadUserData(uid) {
             }
 
             if (isExpired) {
-                console.log(`🧨 [자동 폭파] 기간 만료 카드: ${cardData.name}`);
-                
-                if (cardData.type !== 'text' && cardData.publicIds) {
+                // 원본 파일만 클라우드에서 지우고, 남에게서 복사해온 파일(isSharedCopy)은 클라우드를 건드리지 않음
+                if (cardData.type !== 'text' && cardData.publicIds && !cardData.isSharedCopy) {
                     const rType = cardData.type === 'image' ? 'image' : 'raw';
                     const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
                     for (const pid of pIds) {
@@ -188,21 +299,19 @@ async function loadUserData(uid) {
         }
 
         cardsToRender.sort((a, b) => a.uploadTime - b.uploadTime);
-
-        // 💡 ★★★ 고스트 청소 작업(Promise)들을 모아둘 배열 생성
         const ghostCleanupPromises = [];
 
         cardsToRender.forEach(cardData => {
             createCard(cardData, cardData.id);
-            if (cardData.size) {
+            // 공유받은 사본은 내 용량 계산에서 제외
+            if (cardData.size && !cardData.isSharedCopy) {
                 totalUsedSpace += (parseFloat(cardData.size) * 1024 * 1024);
             }
-            // 💡 ★★★ 청소 함수의 실행 결과를 배열에 담습니다. (2차 방어)
             ghostCleanupPromises.push(performGhostDataCleanup(cardData, cardData.id));
         });
+        
         updateQuotaUI();
 
-        // 1차 방어 알림: 기간 만료 자동 삭제 보고
         if (expiredCount > 0) {
             let alertMsg = `기간이 만료되어 ${expiredCount}개의 데이터가 자동 삭제되었습니다.\n`;
             if (expiredCount === 1) {
@@ -212,21 +321,16 @@ async function loadUserData(uid) {
             } else {
                 alertMsg += `(삭제된 항목: ${expiredNames.join(', ')} 외 ${expiredCount - 2}건)`;
             }
-            
             setTimeout(() => {
                 alert(alertMsg);
             }, 300);
         }
 
-        // 💡 ★★★ 2차 방어 알림: 고스트 카드 삭제 보고 ★★★
         Promise.all(ghostCleanupPromises).then(results => {
-            // results 배열에 담긴 삭제 결과(1 또는 0)들을 모두 더합니다.
             const ghostDeletedCount = results.reduce((sum, current) => sum + current, 0);
-            
             if (ghostDeletedCount > 0) {
-                // 1차 만료 알림과 겹쳐서 안 보이는 현상을 막기 위해 0.8초 딜레이를 줍니다.
                 setTimeout(() => {
-                    alert(`${ghostDeletedCount}건의 카드가 파일이 존재하지 않아 삭제되었습니다.`);
+                    alert(`${ghostDeletedCount}건의 카드가 원본 파일 삭제로 인해 자동 정리되었습니다.`);
                 }, 800);
             }
         });
@@ -424,9 +528,7 @@ async function handleFilesUpload(files, type) {
 
     overlay.classList.add('active');
     
-    // ★★★ 업로드 시점에 고유한 타임스탬프 생성 ★★★
     const uploadTimestamp = new Date().getTime();
-    // ★★★ 현재 로그인한 사용자의 고유 ID (폴더명으로 사용) ★★★
     const uid = auth.currentUser.uid;
 
     for (let i = 0; i < fileArray.length; i++) {
@@ -439,13 +541,9 @@ async function handleFilesUpload(files, type) {
         formData.append('file', file);
         formData.append('upload_preset', 'filemover');
 
-        // ★★★ 사용자 폴더 지정 (Cloudinary가 알아서 만듦) ★★★
-        formData.append('folder', uid);
-
-        // ★★★ 타임스탬프 꼬리표 붙이기 (예: 출장보고서_1710002830) ★★★
+        // 타임스탬프 꼬리표 붙이기 (폴더명 포함)
         const originalNameBase = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-        formData.append('public_id', `${originalNameBase}_${uploadTimestamp}_${i}`); 
-        // 다중 파일 업로드 시 겹치지 않게 뒤에 _${i} (인덱스)도 추가로 붙였습니다.
+        formData.append('public_id', `${uid}/${originalNameBase}_${uploadTimestamp}_${i}`); 
 
         const cloudName = 'dxcfrulyd';
 
@@ -485,7 +583,6 @@ async function handleFilesUpload(files, type) {
                 groupSize += file.size;
                 fileUrls.push(data.secure_url);
                 originalNames.push(file.name);
-                // 응답받은 public_id에는 "uid/파일명_타임스탬프_인덱스" 형태로 폴더 경로까지 포함되어 있습니다.
                 publicIds.push(data.public_id); 
             } else {
                 console.error("Cloudinary 응답 에러:", data);
@@ -498,7 +595,6 @@ async function handleFilesUpload(files, type) {
     }
 
     overlay.classList.remove('active');
-
     updateQuotaUI();
 
     const sizeInMB = groupSize / (1024 * 1024);
@@ -583,14 +679,14 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
     if (!auth.currentUser) return;
     if (!confirm('모든 카드를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
 
-    const uid = auth.currentUser.uid;
     try {
-        const q = query(collection(db, 'cards'), where('uid', '==', uid));
+        const q = query(collection(db, 'cards'), where('uid', '==', auth.currentUser.uid));
         const snapshot = await getDocs(q);
         
         for (const d of snapshot.docs) {
             const cardData = d.data();
-            if (cardData.type !== 'text' && cardData.publicIds) {
+            // 공유받은 사본이 아닐 때만 클라우드 파일을 삭제
+            if (cardData.type !== 'text' && cardData.publicIds && !cardData.isSharedCopy) {
                 const rType = cardData.type === 'image' ? 'image' : 'raw';
                 const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
                 for (const pid of pIds) {
@@ -651,11 +747,13 @@ async function forceDownload(url, filename) {
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
+        
         let downloadName = filename;
         if (!downloadName) {
             const urlParts = url.split('/');
             downloadName = urlParts[urlParts.length - 1] || 'download_file';
         }
+        
         a.download = downloadName;
         document.body.appendChild(a);
         a.click();
@@ -728,9 +826,12 @@ function createCard(data, docId = null) {
 
     const moreBtnWrap = document.createElement('div');
     moreBtnWrap.style.position = 'relative';
+    
+    // ★★★ 공유 및 삭제 메뉴 ★★★
     moreBtnWrap.innerHTML = `
         <button class="action-icon-btn more-btn"><span class="material-symbols-outlined">more_vert</span></button>
         <div class="delete-menu" style="display:none; position:absolute; right:0; top:100%; background:white; border:1px solid #ddd; border-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.1); z-index:10; min-width:80px;">
+            <button class="share-action-btn" style="color:#007bff; background:none; border:none; border-bottom:1px solid #eee; padding:10px 16px; width:100%; text-align:left; cursor:pointer; white-space:nowrap; font-size:13px;">공유하기</button>
             <button class="delete-action-btn" style="color:#dc3545; background:none; border:none; padding:10px 16px; width:100%; text-align:left; cursor:pointer; white-space:nowrap; font-size:13px;">삭제</button>
         </div>
     `;
@@ -742,13 +843,18 @@ function createCard(data, docId = null) {
     const bodyDiv = document.createElement('div');
     bodyDiv.className = 'card-body';
     
+    // 공유받은 카드일 경우 파란색 '저장된 공유본' 스티커 표시
+    let sharedTag = data.isSharedCopy ? `<span style="font-size:0.7rem; color:#4A90E2; background:#e8f4fd; padding:2px 6px; border-radius:4px; margin-left:6px;">저장된 공유본</span>` : '';
+    
     bodyDiv.innerHTML = `
         <div style="display: flex; gap: 12px; align-items: flex-start; margin-bottom: 4px;">
             <div style="flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; background: #f8f9fa; border-radius: 8px;">
                 ${svgIcon}
             </div>
             <div style="flex-grow: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: center;">
-                <h4 class="card-title" style="margin: 0 0 4px 0;">${titleText}</h4>
+                <h4 class="card-title" style="margin: 0 0 4px 0; display:flex; align-items:center;">
+                    ${titleText} ${sharedTag}
+                </h4>
                 <p class="card-desc desc-clamp" style="margin: 0;">${descText}</p>
             </div>
         </div>
@@ -762,6 +868,7 @@ function createCard(data, docId = null) {
     const titleEl = bodyDiv.querySelector('.card-title');
     titleEl.style.cursor = 'pointer';
     titleEl.title = data.type === 'text' && badgeText !== 'WEB' ? '클릭하여 메모 보기' : '클릭하여 열기 및 다운로드';
+    
     titleEl.addEventListener('click', () => {
         if (data.type === 'text') {
             if (badgeText === 'WEB') {
@@ -788,8 +895,10 @@ function createCard(data, docId = null) {
 
     const moreBtn = moreBtnWrap.querySelector('.more-btn');
     const deleteMenu = moreBtnWrap.querySelector('.delete-menu');
+    const shareBtn = moreBtnWrap.querySelector('.share-action-btn');
     const deleteBtn = moreBtnWrap.querySelector('.delete-action-btn');
 
+    // 메뉴 팝업 띄우기
     moreBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const isVisible = deleteMenu.style.display === 'block';
@@ -797,15 +906,35 @@ function createCard(data, docId = null) {
         if (!isVisible) deleteMenu.style.display = 'block';
     });
 
-    document.addEventListener('click', () => { deleteMenu.style.display = 'none'; });
+    document.addEventListener('click', () => { 
+        deleteMenu.style.display = 'none'; 
+    });
 
+    // ★★★ 공유 버튼 클릭 이벤트 ★★★
+    shareBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteMenu.style.display = 'none';
+        if (!docId) return;
+        
+        // 현재 앱 URL 뒤에 파라미터 붙여서 링크 생성
+        const shareUrl = window.location.origin + window.location.pathname + '?share=' + docId;
+        
+        navigator.clipboard.writeText(shareUrl).then(() => {
+            alert('🔗 공유 링크가 복사되었습니다!\n카톡이나 메시지로 전달해 주세요.\n\n(참고: 내 카드를 삭제하면 공유 링크도 즉시 폭파됩니다)');
+        }).catch(err => {
+            alert('링크 복사에 실패했습니다. 수동으로 복사해주세요:\n' + shareUrl);
+        });
+    });
+
+    // ★★★ 삭제 버튼 클릭 이벤트 ★★★
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         deleteMenu.style.display = 'none';
         if (!confirm('정말 이 카드를 삭제하시겠습니까?')) return;
         
         try {
-            if (data.type !== 'text' && data.publicIds) {
+            // 원본 파일일 때만 클라우디너리에서 삭제 (공유 사본은 안 지움)
+            if (data.type !== 'text' && data.publicIds && !data.isSharedCopy) {
                 const rType = data.type === 'image' ? 'image' : 'raw';
                 const pIds = Array.isArray(data.publicIds) ? data.publicIds : [data.publicIds];
                 
@@ -816,18 +945,20 @@ function createCard(data, docId = null) {
 
             if (docId) await deleteDoc(doc(db, 'cards', docId));
             
-            if (data.type !== 'text' && data.size) {
+            // 내 용량 깎기
+            if (data.type !== 'text' && data.size && !data.isSharedCopy) {
                 totalUsedSpace -= (parseFloat(data.size) * 1024 * 1024);
                 if (totalUsedSpace < 0) totalUsedSpace = 0;
                 updateQuotaUI();
             }
             card.remove();
         } catch (error) {
-            console.error('삭제 중 오류 발생:', error);
+            console.error('삭제 오류:', error);
             alert('데이터 삭제에 실패했습니다.');
         }
     });
 
+    // 연장 버튼 설정
     const statusContainer = bodyDiv.querySelector('.card-status-container');
     const statusDiv = statusContainer.querySelector('.card-status');
     const extendBtn = document.createElement('button');
@@ -842,6 +973,7 @@ function createCard(data, docId = null) {
         applyFilter(currentFilter);
     }
 
+    // 자세히 보기 토글
     setTimeout(() => {
         const descEl = bodyDiv.querySelector('.card-desc');
         if (descEl && descEl.scrollHeight > descEl.clientHeight) {
@@ -864,6 +996,7 @@ function createCard(data, docId = null) {
         }
     }, 10);
 
+    // 기간 만료 타이머
     if (data.expirationDays !== 'permanent') {
         let expireTime = data.uploadTime + (data.expirationDays * 24 * 60 * 60 * 1000);
 
@@ -872,7 +1005,7 @@ function createCard(data, docId = null) {
             const timeLeft = expireTime - now;
 
             if (timeLeft <= 0) {
-                statusDiv.innerText = "만료됨 (새로고침 시 자동 정리됩니다)";
+                statusDiv.innerText = "만료됨 (새로고침 시 자동 정리)";
                 extendBtn.style.display = 'none';
                 clearInterval(interval);
                 return;
@@ -881,12 +1014,13 @@ function createCard(data, docId = null) {
             const hoursLeft = timeLeft / (1000 * 60 * 60);
 
             if (hoursLeft < 24) {
-                statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
+                statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후 만료`;
             } else {
-                statusDiv.innerText = `${Math.floor(hoursLeft / 24) + 1}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
+                statusDiv.innerText = `${Math.floor(hoursLeft / 24) + 1}일 후 만료`;
             }
 
-            if (hoursLeft <= 48) {
+            // 기간 연장 버튼 표시 (공유 사본이 아닐 때만)
+            if (hoursLeft <= 48 && !data.isSharedCopy) {
                 extendBtn.style.display = 'inline-block';
                 statusDiv.style.color = '#e74c3c';
                 statusDiv.style.fontWeight = 'bold';
@@ -923,7 +1057,8 @@ function createCard(data, docId = null) {
     }
 }
 
-function showMultiDownloadModal(data, badgeText) {
+// ★★★ 다중 다운로드 모달 띄우기 (손님 공유 모드 지원) ★★★
+function showMultiDownloadModal(data, badgeText, isShare = false) {
     multiDownloadList.innerHTML = '';
     const isPhoto = badgeText === 'PHOTO';
     const urls = Array.isArray(data.content) ? data.content : [data.content];
@@ -962,10 +1097,23 @@ function showMultiDownloadModal(data, badgeText) {
     });
 
     multiDownloadTitle.innerText = isPhoto ? '사진 목록' : '파일 목록';
+    
+    // 💡 공유 모드일 때만 저장 버튼 보이기
+    const shareActions = document.getElementById('fileShareActions');
+    if (shareActions) {
+        if (isShare) {
+            shareActions.style.display = 'block';
+            document.getElementById('saveFileShareBtn').onclick = () => saveSharedCardToMyApp(data);
+        } else {
+            shareActions.style.display = 'none';
+        }
+    }
+
     multiDownloadModal.style.display = 'flex';
 }
 
-function showMemoViewModal(data, docId = null) {
+// ★★★ 메모 보기 모달 띄우기 (손님 공유 모드 지원) ★★★
+function showMemoViewModal(data, docId = null, isShare = false) {
     const memoViewModal = document.getElementById('memoViewModal');
     const memoViewTitle = document.getElementById('memoViewTitle');
     const memoViewContent = document.getElementById('memoViewContent');
@@ -975,8 +1123,29 @@ function showMemoViewModal(data, docId = null) {
 
     memoViewTitle.innerText = data.name || '제목없음';
     memoViewContent.value = data.content;
+    
+    // 손님 모드이면 내용을 수정하지 못하도록 읽기 전용으로 변경
+    memoViewContent.readOnly = isShare;
+    memoViewSaveBtn.style.display = isShare ? 'none' : 'block';
 
-    closeMemoViewBtn.onclick = () => memoViewModal.style.display = 'none';
+    // 💡 공유 모드일 때만 저장 버튼 보이기
+    const shareActions = document.getElementById('memoShareActions');
+    if (shareActions) {
+        if (isShare) {
+            shareActions.style.display = 'block';
+            document.getElementById('saveMemoShareBtn').onclick = () => saveSharedCardToMyApp(data);
+        } else {
+            shareActions.style.display = 'none';
+        }
+    }
+
+    closeMemoViewBtn.onclick = () => {
+        memoViewModal.style.display = 'none';
+        // 창 닫을 때 손님 모드이면 로그인 창 띄우기
+        if (isShare && !auth.currentUser) {
+            loginScreen.style.display = 'flex';
+        }
+    };
 
     memoViewCopyBtn.onclick = () => {
         navigator.clipboard.writeText(memoViewContent.value).then(() => {
@@ -984,50 +1153,52 @@ function showMemoViewModal(data, docId = null) {
             memoViewCopyBtn.style.background = '#28a745';
             setTimeout(() => {
                 memoViewCopyBtn.innerText = '내용 복사';
-                memoViewCopyBtn.style.background = '';
+                memoViewCopyBtn.style.background = '#6c757d';
             }, 1500);
         }).catch(err => console.error('복사 실패:', err));
     };
 
-    memoViewSaveBtn.onclick = async () => {
-        const newContent = memoViewContent.value.trim();
-        if (!newContent) return;
-        if (newContent === data.content) {
-            memoViewModal.style.display = 'none';
-            return;
-        }
-
-        memoViewSaveBtn.disabled = true;
-        memoViewSaveBtn.innerText = '저장 중...';
-
-        try {
-            if (docId) {
-                await updateDoc(doc(db, 'cards', docId), { content: newContent });
-            }
-
-            data.content = newContent;
-
-            const cardEl = document.querySelector(`.list-card[data-id="${docId}"]`);
-            if (cardEl) {
-                const descEl = cardEl.querySelector('.card-desc');
-                if (descEl) descEl.innerText = newContent;
-            }
-
-            memoViewSaveBtn.innerText = '저장됨 ✓';
-            memoViewSaveBtn.style.background = '#28a745';
-            setTimeout(() => {
+    if (!isShare) {
+        memoViewSaveBtn.onclick = async () => {
+            const newContent = memoViewContent.value.trim();
+            if (!newContent) return;
+            if (newContent === data.content) {
                 memoViewModal.style.display = 'none';
+                return;
+            }
+
+            memoViewSaveBtn.disabled = true;
+            memoViewSaveBtn.innerText = '저장 중...';
+
+            try {
+                if (docId) {
+                    await updateDoc(doc(db, 'cards', docId), { content: newContent });
+                }
+
+                data.content = newContent;
+
+                const cardEl = document.querySelector(`.list-card[data-id="${docId}"]`);
+                if (cardEl) {
+                    const descEl = cardEl.querySelector('.card-desc');
+                    if (descEl) descEl.innerText = newContent;
+                }
+
+                memoViewSaveBtn.innerText = '저장됨 ✓';
+                memoViewSaveBtn.style.background = '#28a745';
+                setTimeout(() => {
+                    memoViewModal.style.display = 'none';
+                    memoViewSaveBtn.innerText = '저장';
+                    memoViewSaveBtn.style.background = '#4A90E2';
+                    memoViewSaveBtn.disabled = false;
+                }, 1000);
+            } catch (err) {
+                console.error('저장 실패:', err);
+                alert('저장에 실패했습니다.');
                 memoViewSaveBtn.innerText = '저장';
-                memoViewSaveBtn.style.background = '';
                 memoViewSaveBtn.disabled = false;
-            }, 1000);
-        } catch (err) {
-            console.error('저장 실패:', err);
-            alert('저장에 실패했습니다.');
-            memoViewSaveBtn.innerText = '저장';
-            memoViewSaveBtn.disabled = false;
-        }
-    };
+            }
+        };
+    }
 
     memoViewModal.style.display = 'flex';
 }
