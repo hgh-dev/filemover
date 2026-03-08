@@ -3,6 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebas
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
+// TODO: 본인의 Firebase 프로젝트 설정값으로 교체해야 합니다.
 const firebaseConfig = {
     apiKey: "AIzaSyC49b-msgDEf_vorf1gmu3dJ_oKDPUrh5k",
     authDomain: "filemover-7cc9f.firebaseapp.com",
@@ -153,7 +154,7 @@ async function loadUserData(uid) {
             const cardData = docSnap.data();
             const docId = docSnap.id;
 
-            // ★★★ [신규 3차 방어] 업로드 중단된 찌꺼기 파일 청소 ★★★
+            // ★★★ [3차 방어] 업로드 중단된 찌꺼기 파일 청소 ★★★
             if (cardData.status === 'uploading') {
                 console.log(`🧹 [중단된 업로드 청소] 찌꺼기 카드 발견. 삭제 진행...`);
                 // 클라우드에 중간까지 올라간 파일이 있다면 모두 삭제
@@ -167,7 +168,7 @@ async function loadUserData(uid) {
                 // 불완전한 DB 카드 파기
                 await deleteDoc(doc(db, 'cards', docId));
                 trashCleanedCount++;
-                continue; // 화면에 그리지 않고 다음 카드로 패스!
+                continue; // 화면에 그리지 않고 다음 카드로 패스
             }
 
             // 1차 방어 (만료된 카드 청소)
@@ -307,7 +308,7 @@ async function deleteCloudinaryFile(publicId, resourceType = 'image') {
 let totalUsedSpace = 0;
 const MAX_SPACE = 100 * 1024 * 1024;
 
-// ★★★ 업로드 핵심 로직 (빈 카드 선발행 & 원본 이름 유지 적용) ★★★
+// ★★★ 업로드 핵심 로직 (빈 카드 선발행 & 올바른 폴더/이름 적용) ★★★
 async function handleFilesUpload(files, type) {
     if (!files || files.length === 0) return;
 
@@ -330,13 +331,13 @@ async function handleFilesUpload(files, type) {
     const uid = auth.currentUser.uid;
     let isImageGroup = type === 'image';
 
-    // 💡 1. DB에 '업로드 중(uploading)' 꼬리표를 단 빈 카드를 먼저 생성합니다.
     const sizeInMB = totalNewSize / (1024 * 1024);
     let expirationDays = 30;
     if (sizeInMB >= 50) expirationDays = 3; else if (sizeInMB >= 10) expirationDays = 7;
 
     let docRef;
     try {
+        // [1] status: 'uploading' 꼬리표를 단 빈 카드를 미리 생성합니다.
         docRef = await addDoc(collection(db, "cards"), {
             uid: uid,
             type: isImageGroup ? 'image' : 'file',
@@ -349,7 +350,7 @@ async function handleFilesUpload(files, type) {
             originalDuration: expirationDays,
             uploadTime: uploadTimestamp,
             fileCount: 0,
-            status: 'uploading' // ★ 이 꼬리표가 있으면 중간에 앱이 꺼져도 다음 접속 시 청소됨
+            status: 'uploading' 
         });
     } catch (e) {
         console.error("임시 문서 생성 에러: ", e);
@@ -360,30 +361,26 @@ async function handleFilesUpload(files, type) {
 
     let fileUrls = [];
     let originalNamesList = [];
-    let publicIdsList = []; 
+    let publicIdsList = [];
     let groupSize = 0;
 
     for (let i = 0; i < fileArray.length; i++) {
         let file = fileArray[i];
-        
-        // 💡 2. 사진 리사이징 & 원본 이름 유지 로직
-        let finalFileName = file.name; // 스마트폰이 주는 원본 이름 그대로 사용
-        
+        let finalFileName = file.name;
+
         if (isImageGroup) {
-            const originalSize = file.size;
             file = await resizeImage(file);
-            // resizeImage 함수 내에서 진짜로 크기가 조절되어 반환된 파일의 이름은 'resize_원본명'으로 바뀌어 있음
-            finalFileName = file.name; 
+            finalFileName = file.name;
         }
 
-        // 이름 목록에 원본/리사이즈 이름 정확히 푸시
         originalNamesList.push(finalFileName);
 
         const formData = new FormData();
         formData.append('file', file);
         formData.append('upload_preset', 'filemover');
 
-        // 확장자를 제거하고 타임스탬프를 붙여서 Cloudinary ID 생성
+        // ★★★ [폴더 지정 핵심 부분] ★★★
+        // 별도의 folder 명령어를 지우고 public_id 안에 폴더 경로(uid/)를 결합해서 보냅니다!
         const nameBase = finalFileName.substring(0, finalFileName.lastIndexOf('.')) || finalFileName;
         const newPublicId = `${uid}/${nameBase}_${uploadTimestamp}_${i}`;
         formData.append('public_id', newPublicId); 
@@ -417,7 +414,7 @@ async function handleFilesUpload(files, type) {
                 fileUrls.push(data.secure_url);
                 publicIdsList.push(data.public_id); 
                 
-                // 💡 3. 성공할 때마다 DB 카드를 즉시 업데이트. (중간에 꺼져도 이 파일은 DB에 적혀있으므로 완벽하게 추적/삭제 가능!)
+                // [2] 성공할 때마다 빈 카드에 파일 정보 실시간 업데이트
                 await updateDoc(doc(db, 'cards', docRef.id), { publicIds: publicIdsList });
             } else {
                 alert(`${finalFileName} 업로드에 실패했습니다.`);
@@ -430,7 +427,7 @@ async function handleFilesUpload(files, type) {
 
     overlay.classList.remove('active');
 
-    // 💡 4. 모든 업로드가 끝난 후, 카드를 '완료(complete)' 상태로 최종 저장하고 화면에 그림
+    // [3] 모든 업로드가 끝난 후, 카드를 '완료(complete)' 상태로 최종 저장
     if (fileUrls.length > 0) {
         updateQuotaUI();
         const finalSizeMB = (groupSize / (1024 * 1024)).toFixed(2);
@@ -454,7 +451,6 @@ async function handleFilesUpload(files, type) {
         await updateDoc(doc(db, 'cards', docRef.id), finalCardData);
         createCard(finalCardData, docRef.id);
     } else {
-        // 단 1개도 못 올렸다면 빈 카드를 지워버림
         await deleteDoc(doc(db, 'cards', docRef.id));
     }
 }
@@ -463,7 +459,7 @@ function resizeImage(file) {
     return new Promise((resolve) => {
         const option = resizeOption.value;
         if (option === 'original') {
-            resolve(file); // ★ '원본 크기'일 때는 원본 파일을 그대로 반환 (이름 유지됨)
+            resolve(file); 
             return;
         }
 
@@ -485,7 +481,6 @@ function resizeImage(file) {
 
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             canvas.toBlob((blob) => {
-                // ★ 크기가 줄어든 경우에만 이름 앞에 'resize_'를 붙여서 새로운 파일을 만듦
                 resolve(new File([blob], `resize_${file.name}`, {
                     type: file.type,
                     lastModified: Date.now()
