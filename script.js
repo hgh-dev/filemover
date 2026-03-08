@@ -213,21 +213,21 @@ async function loadUserData(uid) {
 
         // 1. 기간 만료 알림
         if (expiredCount > 0) {
-            let alertMsg = `기간이 만료되어 ${expiredCount}개의 데이터가 자동 삭제되었습니다.\n`;
+            let alertMsg = `기간이 만료되어 ${expiredCount}개의 카드 및 그 데이터가 자동 삭제되었습니다.\n`;
             alertMsg += expiredCount === 1 ? `(삭제된 항목: ${expiredNames[0]})` : `(삭제된 항목: ${expiredNames.join(', ')} 외)`;
             setTimeout(() => alert(alertMsg), 300);
         }
 
         // 2. 업로드 중단 파일 청소 알림
         if (trashCleanedCount > 0) {
-            setTimeout(() => alert(`이전에 업로드가 중단되었던 ${trashCleanedCount}건의 찌꺼기 파일이 클라우드에서 자동 삭제(용량 복구)되었습니다.`), 600);
+            setTimeout(() => alert(`이전에 중단되었던 업로드가 ${trashCleanedCount}건 있었습니다. 중단 전 업로드된 데이터가 서버에서 자동 삭제되었습니다.`), 600);
         }
 
         // 3. 고스트 카드 알림
         Promise.all(ghostCleanupPromises).then(results => {
             const ghostDeletedCount = results.reduce((sum, current) => sum + current, 0);
             if (ghostDeletedCount > 0) {
-                setTimeout(() => alert(`${ghostDeletedCount}건의 카드가 파일이 존재하지 않아 삭제되었습니다.`), 900);
+                setTimeout(() => alert(`서버에 데이터가 존재하지 않아 ${ghostDeletedCount}건의 카드가 삭제되었습니다.`), 900);
             }
         });
 
