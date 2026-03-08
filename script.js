@@ -318,7 +318,7 @@ async function handleFilesUpload(files, type) {
     for (let file of fileArray) totalNewSize += file.size;
 
     if (totalUsedSpace + totalNewSize > MAX_SPACE) {
-        alert(`전체 할당 용량(100MB)을 초과할 수 없습니다. 추가하려는 용량: ${(totalNewSize / (1024 * 1024)).toFixed(2)}MB`); return;
+        alert(`전체 할당 용량(100MB)을 초과할 수 없습니다.`); return;
     }
 
     const overlay = document.getElementById('uploadOverlay');
@@ -332,128 +332,106 @@ async function handleFilesUpload(files, type) {
     const uid = auth.currentUser.uid;
     let isImageGroup = type === 'image';
 
+    // 1. [핵심] 업로드 시작 전, 모든 파일의 ID와 이름을 미리 생성합니다.
+    const preGeneratedPublicIds = fileArray.map((file, i) => {
+        const nameBase = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+        return `${nameBase}_${uploadTimestamp}_${i}`;
+    });
+    const preGeneratedNames = fileArray.map(file => file.name);
+
     const sizeInMB = totalNewSize / (1024 * 1024);
     let expirationDays = 30;
     if (sizeInMB >= 50) expirationDays = 3; else if (sizeInMB >= 10) expirationDays = 7;
 
     let docRef;
     try {
-        // [1] status: 'uploading' 꼬리표를 단 빈 카드를 미리 생성합니다.
+        // 2. [변경] 업로드 시작 전, 미리 생성한 ID 리스트를 포함하여 DB에 카드를 먼저 만듭니다.
         docRef = await addDoc(collection(db, "cards"), {
             uid: uid,
             type: isImageGroup ? 'image' : 'file',
             content: [],
-            originalNames: [],
-            publicIds: [],
+            originalNames: preGeneratedNames,
+            publicIds: preGeneratedPublicIds, // 미리 기록!
             name: "업로드 진행 중...",
-            size: "0.00",
+            size: (totalNewSize / (1024 * 1024)).toFixed(2),
             expirationDays: expirationDays,
             originalDuration: expirationDays,
             uploadTime: uploadTimestamp,
-            fileCount: 0,
+            fileCount: fileArray.length,
             status: 'uploading' 
         });
     } catch (e) {
         console.error("임시 문서 생성 에러: ", e);
-        alert("업로드 준비 중 오류가 발생했습니다.");
-        overlay.classList.remove('active');
-        return;
+        overlay.classList.remove('active'); return;
     }
 
     let fileUrls = [];
-    let originalNamesList = [];
-    let publicIdsList = [];
-    let groupSize = 0;
+    const cloudName = 'dxcfrulyd';
 
     for (let i = 0; i < fileArray.length; i++) {
         let file = fileArray[i];
-        let finalFileName = file.name;
-
-        if (isImageGroup) {
-            file = await resizeImage(file);
-            finalFileName = file.name;
-        }
-
-        originalNamesList.push(finalFileName);
+        if (isImageGroup) file = await resizeImage(file);
 
         const formData = new FormData();
         formData.append('file', file);
         formData.append('upload_preset', 'filemover');
+        // 3. 미리 생성해서 DB에 적어둔 그 ID를 그대로 사용합니다.
+        formData.append('public_id', preGeneratedPublicIds[i]); 
+        formData.append('folder', uid); 
 
-        // ★★★ [폴더 지정 핵심 부분] ★★★
-        // 1. 파일 이름에서 확장자를 뺀 순수 이름만 추출해 (예: image.png -> image)
-        const nameBase = finalFileName.substring(0, finalFileName.lastIndexOf('.')) || finalFileName;
-        // 2. public_id에서는 uid 경로를 삭제하고 순수 파일명+시간값만 남겨
-        const newPublicId = `${nameBase}_${uploadTimestamp}_${i}`;
-        formData.append('public_id', newPublicId); 
-        // 3. ★ 핵심: folder 라는 라벨을 새로 만들어서 uid(사용자 고유번호) 폴더에 담으라고 명시해
-        formData.append('folder', uid);
-
-        const cloudName = 'dxcfrulyd';
-        overlayFilename.innerText = finalFileName;
-        overlayBar.style.width = '0%'; overlayPct.innerText = '0%';
+        overlayFilename.innerText = file.name;
         overlayCount.innerText = fileArray.length > 1 ? `파일 ${i + 1} / ${fileArray.length}` : '';
 
         try {
             const data = await new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
-                xhr.upload.onprogress = (event) => {
-                    if (event.lengthComputable) {
-                        const pct = Math.round((event.loaded / event.total) * 100);
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const pct = Math.round((e.loaded / e.total) * 100);
                         overlayBar.style.width = pct + '%'; overlayPct.innerText = pct + '%';
                     }
                 };
-                xhr.onload = () => {
-                    if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-                    else reject(new Error(`HTTP 오류: ${xhr.status}`));
-                };
+                xhr.onload = () => resolve(JSON.parse(xhr.responseText));
                 xhr.onerror = () => reject(new Error('네트워크 오류'));
                 xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`);
                 xhr.send(formData);
             });
 
             if (data.secure_url) {
-                totalUsedSpace += file.size;
-                groupSize += file.size;
                 fileUrls.push(data.secure_url);
-                publicIdsList.push(data.public_id); 
-                
-                // [2] 성공할 때마다 빈 카드에 파일 정보 실시간 업데이트
-                await updateDoc(doc(db, 'cards', docRef.id), { publicIds: publicIdsList });
-            } else {
-                alert(`${finalFileName} 업로드에 실패했습니다.`);
+                totalUsedSpace += file.size;
             }
         } catch (error) {
             console.error("파일 업로드 에러:", error);
-            alert(`${finalFileName} 전송에 실패했습니다.`);
         }
     }
 
     overlay.classList.remove('active');
 
-    // [3] 모든 업로드가 끝난 후, 카드를 '완료(complete)' 상태로 최종 저장
     if (fileUrls.length > 0) {
         updateQuotaUI();
-        const finalSizeMB = (groupSize / (1024 * 1024)).toFixed(2);
-        let finalCardName = fileArray.length > 1 ? `${originalNamesList[0]} 외 ${originalNamesList.length - 1}건` : originalNamesList[0];
+        let finalCardName = fileArray.length > 1 ? `${preGeneratedNames[0]} 외 ${fileArray.length - 1}건` : preGeneratedNames[0];
 
-        const finalCardData = {
-            uid: uid,
-            type: isImageGroup ? 'image' : 'file',
-            content: fileUrls.length === 1 ? fileUrls[0] : fileUrls, 
-            originalNames: originalNamesList.length === 1 ? originalNamesList[0] : originalNamesList, 
-            publicIds: publicIdsList.length === 1 ? publicIdsList[0] : publicIdsList, 
+        // 4. 모든 업로드 완료 후 상태만 'complete'로 변경합니다.
+        await updateDoc(doc(db, 'cards', docRef.id), {
+            content: fileUrls.length === 1 ? fileUrls[0] : fileUrls,
             name: finalCardName,
-            size: finalSizeMB,
-            expirationDays: expirationDays,
-            originalDuration: expirationDays,
+            status: 'complete'
+        });
+        
+        // 화면에 카드 표시 (이미 DB에 다 있으므로 data 객체 재구성)
+        const finalData = {
+            uid, type: isImageGroup ? 'image' : 'file',
+            content: fileUrls.length === 1 ? fileUrls[0] : fileUrls,
+            originalNames: preGeneratedNames.length === 1 ? preGeneratedNames[0] : preGeneratedNames,
+            publicIds: preGeneratedPublicIds.length === 1 ? preGeneratedPublicIds[0] : preGeneratedPublicIds,
+            name: finalCardName,
+            size: (totalNewSize / (1024 * 1024)).toFixed(2),
+            expirationDays, originalDuration: expirationDays,
             uploadTime: new Date().getTime(),
-            fileCount: fileUrls.length,
-            status: 'complete' // ★ 정상 완료 태그
+            status: 'complete'
         };
-
-        await updateDoc(doc(db, 'cards', docRef.id), finalCardData);
-        createCard(finalCardData, docRef.id);
+        createCard(finalData, docRef.id);
     } else {
         await deleteDoc(doc(db, 'cards', docRef.id));
     }
