@@ -134,7 +134,7 @@ async function performGhostDataCleanup(cardData, docId) {
     }
 }
 
-// ★★★ 1차 방어: 접속 시 일괄 청소 로직 추가 ★★★
+// === 1차 방어: 접속 시 일괄 청소 로직 ===
 async function loadUserData(uid) {
     const container = document.getElementById('cardContainer');
     container.innerHTML = '';
@@ -149,13 +149,11 @@ async function loadUserData(uid) {
         const cardsToRender = [];
         const now = new Date().getTime();
 
-        // 1. 모든 카드를 돌면서 만료 검사 진행
         for (const docSnap of querySnapshot.docs) {
             const cardData = docSnap.data();
             const docId = docSnap.id;
 
             let isExpired = false;
-            // 영구 보관이 아닌 카드만 시간 검사
             if (cardData.expirationDays !== 'permanent') {
                 const expireTime = cardData.uploadTime + (cardData.expirationDays * 24 * 60 * 60 * 1000);
                 if (now > expireTime) {
@@ -164,7 +162,6 @@ async function loadUserData(uid) {
             }
 
             if (isExpired) {
-                // [만료됨] -> 클라우디너리 삭제 후 DB 삭제
                 console.log(`🧨 [자동 폭파] 기간 만료 카드: ${cardData.name}`);
                 
                 if (cardData.type !== 'text' && cardData.publicIds) {
@@ -177,18 +174,15 @@ async function loadUserData(uid) {
                 
                 await deleteDoc(doc(db, 'cards', docId));
 
-                // 알림용 데이터 수집
                 expiredCount++;
                 if (expiredNames.length < 2) {
                     expiredNames.push(cardData.name || '이름 없음');
                 }
             } else {
-                // [안 만료됨] -> 화면에 그릴 목록에 추가
                 cardsToRender.push({ id: docId, ...cardData });
             }
         }
 
-        // 2. 살아남은 카드들만 화면에 그리기
         cardsToRender.sort((a, b) => a.uploadTime - b.uploadTime);
 
         cardsToRender.forEach(cardData => {
@@ -196,12 +190,10 @@ async function loadUserData(uid) {
             if (cardData.size) {
                 totalUsedSpace += (parseFloat(cardData.size) * 1024 * 1024);
             }
-            // 그린 후, 혹시 수동으로 지운 파일인지 고스트 검사 (2차 방어)
             performGhostDataCleanup(cardData, cardData.id);
         });
         updateQuotaUI();
 
-        // 3. 친절한 알림 띄우기 (청소가 1건이라도 발생했을 경우)
         if (expiredCount > 0) {
             let alertMsg = `기간이 만료되어 ${expiredCount}개의 데이터가 자동 삭제되었습니다.\n`;
             if (expiredCount === 1) {
@@ -212,7 +204,6 @@ async function loadUserData(uid) {
                 alertMsg += `(삭제된 항목: ${expiredNames.join(', ')} 외 ${expiredCount - 2}건)`;
             }
             
-            // 화면 렌더링이 안 끊기도록 약간의 지연 후 알림
             setTimeout(() => {
                 alert(alertMsg);
             }, 300);
@@ -643,6 +634,7 @@ async function forceDownload(url, filename) {
     }
 }
 
+// ★★★ 버튼 가로 배치를 위해 변경된 createCard 함수 ★★★
 function createCard(data, docId = null) {
     const container = document.getElementById('cardContainer');
     const card = document.createElement('div');
@@ -717,6 +709,8 @@ function createCard(data, docId = null) {
 
     const bodyDiv = document.createElement('div');
     bodyDiv.className = 'card-body';
+    
+    // 💡 글자와 버튼을 가로로 묶어주는 Flexbox 컨테이너 추가
     bodyDiv.innerHTML = `
         <div style="display: flex; gap: 12px; align-items: flex-start; margin-bottom: 4px;">
             <div style="flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; background: #f8f9fa; border-radius: 8px;">
@@ -728,7 +722,9 @@ function createCard(data, docId = null) {
             </div>
         </div>
         <span class="card-date">${dateStr}</span>
-        <div class="card-status"></div>
+        <div class="card-status-container" style="display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 2px;">
+            <div class="card-status"></div>
+        </div>
     `;
     card.appendChild(bodyDiv);
 
@@ -801,12 +797,14 @@ function createCard(data, docId = null) {
         }
     });
 
-    const statusDiv = bodyDiv.querySelector('.card-status');
+    // 💡 연장 버튼을 만들고 Flexbox 컨테이너 안에 추가
+    const statusContainer = bodyDiv.querySelector('.card-status-container');
+    const statusDiv = statusContainer.querySelector('.card-status');
     const extendBtn = document.createElement('button');
     extendBtn.className = 'extend-btn';
     extendBtn.innerText = '연장';
     extendBtn.style.display = 'none';
-    statusDiv.after(extendBtn);
+    statusContainer.appendChild(extendBtn); 
 
     container.insertBefore(card, container.firstChild); 
 
@@ -836,7 +834,6 @@ function createCard(data, docId = null) {
         }
     }, 10);
 
-    // ★★★ 타이머 문구 수정: 앱 실행 중에 만료될 경우를 대비 ★★★
     if (data.expirationDays !== 'permanent') {
         let expireTime = data.uploadTime + (data.expirationDays * 24 * 60 * 60 * 1000);
 
@@ -845,7 +842,6 @@ function createCard(data, docId = null) {
             const timeLeft = expireTime - now;
 
             if (timeLeft <= 0) {
-                // 실시간으로 0초가 되면, 새로고침 시 청소된다는 걸 알려줌
                 statusDiv.innerText = "만료됨 (새로고침 시 자동 정리됩니다)";
                 extendBtn.style.display = 'none';
                 clearInterval(interval);
@@ -855,13 +851,13 @@ function createCard(data, docId = null) {
             const hoursLeft = timeLeft / (1000 * 60 * 60);
 
             if (hoursLeft < 24) {
-                statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후에 ${data.type === 'image' ? '사진' : '파일'}이 만료됩니다.`;
+                statusDiv.innerText = `${Math.floor(hoursLeft)}시간 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
             } else {
-                statusDiv.innerText = `${Math.floor(hoursLeft / 24)}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 만료됩니다.`;
+                statusDiv.innerText = `${Math.floor(hoursLeft / 24)}일 후에 ${data.type === 'image' ? '사진' : '파일'}이 삭제됩니다`;
             }
 
             if (hoursLeft <= 48) {
-                extendBtn.style.display = 'block';
+                extendBtn.style.display = 'inline-block'; // 💡 가로 배치를 위해 속성 변경
                 statusDiv.style.color = '#e74c3c';
                 statusDiv.style.fontWeight = 'bold';
             } else {
