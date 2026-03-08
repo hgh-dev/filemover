@@ -43,6 +43,7 @@ const menuAddMemo = document.getElementById('menuAddMemo');
 const menuAddLink = document.getElementById('menuAddLink');
 const menuAddPhoto = document.getElementById('menuAddPhoto');
 const menuAddFile = document.getElementById('menuAddFile');
+const appTitleBtn = document.getElementById('appTitleBtn');
 
 const photoInput = document.getElementById('photoInput');
 const generalFileInput = document.getElementById('generalFileInput');
@@ -751,4 +752,8 @@ function showMemoViewModal(data, docId = null) {
         } catch (err) { alert('저장에 실패했습니다.'); memoViewSaveBtn.innerText = '저장'; memoViewSaveBtn.disabled = false; }
     };
     memoViewModal.style.display = 'flex';
+}
+
+if (appTitleBtn) {
+    appTitleBtn.addEventListener('click', () => window.location.reload());
 }
