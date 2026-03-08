@@ -401,6 +401,11 @@ async function handleFilesUpload(files, type) {
     const overlayCount = document.getElementById('uploadCountLabel');
 
     overlay.classList.add('active');
+    
+    // ★★★ 업로드 시점에 고유한 타임스탬프 생성 ★★★
+    const uploadTimestamp = new Date().getTime();
+    // ★★★ 현재 로그인한 사용자의 고유 ID (폴더명으로 사용) ★★★
+    const uid = auth.currentUser.uid;
 
     for (let i = 0; i < fileArray.length; i++) {
         let file = fileArray[i];
@@ -412,8 +417,13 @@ async function handleFilesUpload(files, type) {
         formData.append('file', file);
         formData.append('upload_preset', 'filemover');
 
+        // ★★★ 사용자 폴더 지정 (Cloudinary가 알아서 만듦) ★★★
+        formData.append('folder', uid);
+
+        // ★★★ 타임스탬프 꼬리표 붙이기 (예: 출장보고서_1710002830) ★★★
         const originalNameBase = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-        formData.append('public_id', originalNameBase);
+        formData.append('public_id', `${originalNameBase}_${uploadTimestamp}_${i}`); 
+        // 다중 파일 업로드 시 겹치지 않게 뒤에 _${i} (인덱스)도 추가로 붙였습니다.
 
         const cloudName = 'dxcfrulyd';
 
@@ -453,6 +463,7 @@ async function handleFilesUpload(files, type) {
                 groupSize += file.size;
                 fileUrls.push(data.secure_url);
                 originalNames.push(file.name);
+                // 응답받은 public_id에는 "uid/파일명_타임스탬프_인덱스" 형태로 폴더 경로까지 포함되어 있습니다.
                 publicIds.push(data.public_id); 
             } else {
                 console.error("Cloudinary 응답 에러:", data);
@@ -634,7 +645,6 @@ async function forceDownload(url, filename) {
     }
 }
 
-// ★★★ 버튼 가로 배치를 위해 변경된 createCard 함수 ★★★
 function createCard(data, docId = null) {
     const container = document.getElementById('cardContainer');
     const card = document.createElement('div');
@@ -710,7 +720,6 @@ function createCard(data, docId = null) {
     const bodyDiv = document.createElement('div');
     bodyDiv.className = 'card-body';
     
-    // 💡 글자와 버튼을 가로로 묶어주는 Flexbox 컨테이너 추가
     bodyDiv.innerHTML = `
         <div style="display: flex; gap: 12px; align-items: flex-start; margin-bottom: 4px;">
             <div style="flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; background: #f8f9fa; border-radius: 8px;">
@@ -797,7 +806,6 @@ function createCard(data, docId = null) {
         }
     });
 
-    // 💡 연장 버튼을 만들고 Flexbox 컨테이너 안에 추가
     const statusContainer = bodyDiv.querySelector('.card-status-container');
     const statusDiv = statusContainer.querySelector('.card-status');
     const extendBtn = document.createElement('button');
@@ -857,7 +865,7 @@ function createCard(data, docId = null) {
             }
 
             if (hoursLeft <= 48) {
-                extendBtn.style.display = 'inline-block'; // 💡 가로 배치를 위해 속성 변경
+                extendBtn.style.display = 'inline-block';
                 statusDiv.style.color = '#e74c3c';
                 statusDiv.style.fontWeight = 'bold';
             } else {
