@@ -614,18 +614,21 @@
             text-align: right;
         }
 
+        /* 💡 수정된 연장 버튼: 작고 눈에 띄지 않게 보호색 적용 */
         .extend-btn {
-            background: #28a745;
-            color: white;
-            border: none;
+            background: #f2f4f7;
+            color: #888;
+            border: 1px solid #ddd;
             border-radius: 4px;
-            padding: 3px 6px;
-            font-size: 0.68rem;
+            padding: 2px 6px;
+            font-size: 0.65rem;
             cursor: pointer;
+            transition: all 0.2s;
         }
 
         .extend-btn:hover {
-            background: #218838;
+            background: #e5e7ea;
+            color: #555;
         }
 
         /* 업로드 프로그레스 오버레이 */
