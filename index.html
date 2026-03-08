@@ -746,6 +746,44 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+
+        /* 삭제 진행 오버레이 및 스피너 스타일 추가 */
+        #deleteOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 9999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            color: white;
+            font-weight: normal;
+        }
+
+        #deleteOverlay.active {
+            display: flex;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
     </style>
 </head>
 
@@ -761,6 +799,12 @@
             <div class="upload-progress-pct" id="uploadProgressPct">0%</div>
             <div class="upload-count-label" id="uploadCountLabel"></div>
         </div>
+    </div>
+
+    <!-- 삭제 진행 오버레이 -->
+    <div id="deleteOverlay">
+        <div class="spinner"></div>
+        <div style="margin-top: 15px; font-size: 14px; letter-spacing: 0.5px;">삭제 중입니다. 앱을 종료하지 마세요.</div>
     </div>
 
     <div class="container">
@@ -880,14 +924,21 @@
             </div>
 
             <!-- 메모 입력 모달 -->
-            <div class="modal-overlay" id="memoModal" style="display: none;">
-                <div class="modal-content">
-                    <h3>메모 추가</h3>
-                    <input type="text" id="memoTitleInput" placeholder="제목을 입력하세요 (선택 사항)">
-                    <textarea id="memoInput" rows="5" placeholder="메모 내용을 입력하세요"></textarea>
-                    <div class="modal-actions">
-                        <button class="cancel-btn" id="cancelMemoBtn">취소</button>
-                        <button class="save-btn" id="saveMemoBtn">저장</button>
+            <div class="modal-overlay" id="memoModal"
+                style="display: none; z-index: 2000; background: rgba(0,0,0,0.85);">
+                <div class="modal-content"
+                    style="max-height: 85vh; display: flex; flex-direction: column; width: 90%; max-width: 600px;">
+                    <h3 style="margin-top: 0; margin-bottom: 14px;">메모 추가</h3>
+                    <input type="text" id="memoTitleInput" placeholder="제목을 입력하세요 (선택 사항)" style="margin-bottom: 10px;">
+                    <textarea id="memoInput" placeholder="메모 내용을 입력하세요"
+                        style="flex: 1; min-height: 300px; resize: vertical; border: 1px solid #ddd; border-radius: 8px; padding: 14px; font-size: 1rem; line-height: 1.7; background: #fff; color: #333; font-family: inherit; outline: none; transition: border-color 0.2s;"
+                        onfocus="this.style.borderColor='#4A90E2'" onblur="this.style.borderColor='#ddd'"></textarea>
+                    <div class="modal-actions"
+                        style="margin-top: 14px; display: flex; justify-content: flex-end; gap: 10px;">
+                        <button class="cancel-btn" id="cancelMemoBtn"
+                            style="padding: 10px 18px; border-radius: 8px;">취소</button>
+                        <button class="save-btn" id="saveMemoBtn"
+                            style="padding: 10px 22px; border-radius: 8px;">저장</button>
                     </div>
                 </div>
             </div>

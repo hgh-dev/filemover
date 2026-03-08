@@ -1,18 +1,10 @@
-// Firebase SDK 모듈 임포트
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-
-// TODO: 본인의 Firebase 프로젝트 설정값으로 교체해야 합니다.
-const firebaseConfig = {
-    apiKey: "AIzaSyC49b-msgDEf_vorf1gmu3dJ_oKDPUrh5k",
-    authDomain: "filemover-7cc9f.firebaseapp.com",
-    projectId: "filemover-7cc9f",
-    storageBucket: "filemover-7cc9f.firebasestorage.app",
-    messagingSenderId: "Y857800312653",
-    appId: "Y1:857800312653:web:3af4530ef8722cab695904",
-    measurementId: "G-ZN7EWK4NB8"
-};
+// 백엔드(Firebase 및 Cloudinary) 관련 모듈 임포트
+import {
+    auth, db, provider,
+    signInWithPopup, onAuthStateChanged, signOut,
+    collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc,
+    deleteCloudinaryFile
+} from "./backend.js";
 
 // PWA: 서비스 워커 등록
 if ('serviceWorker' in navigator) {
@@ -21,11 +13,6 @@ if ('serviceWorker' in navigator) {
             .catch(err => console.log('Service Worker 등록 실패: ', err));
     });
 }
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const provider = new GoogleAuthProvider();
 
 // DOM 요소 
 const loginScreen = document.getElementById('loginScreen');
@@ -91,16 +78,16 @@ onAuthStateChanged(auth, (user) => {
     } else {
         loginScreen.style.display = 'flex';
         appContent.style.display = 'none';
-        document.getElementById('cardContainer').innerHTML = ''; 
+        document.getElementById('cardContainer').innerHTML = '';
     }
 });
 
 // === 2차 방어: 고스트 카드 청소 (자가 치유) ===
 async function performGhostDataCleanup(cardData, docId) {
-    if (cardData.type === 'text') return 0; 
+    if (cardData.type === 'text') return 0;
 
     let urls = Array.isArray(cardData.content) ? cardData.content : [cardData.content];
-    if (urls.length === 0) return 0; 
+    if (urls.length === 0) return 0;
 
     const targetUrl = urls[0];
 
@@ -126,13 +113,42 @@ async function performGhostDataCleanup(cardData, docId) {
                 if (totalUsedSpace < 0) totalUsedSpace = 0;
                 updateQuotaUI();
             }
-            return 1; 
+            return 1;
         }
     } catch (error) {
         console.warn(`파일 검사 중 네트워크 오류 (무시됨): ${targetUrl}`);
     }
-    
-    return 0; 
+
+    return 0;
+}
+
+// 업로드된 파일의 형식(image/video/raw)을 URL 또는 파일 확장자로 파악하여 올바르게 삭제 요청하는 안전한 헬퍼 함수
+async function deleteCardCloudinaryFiles(data) {
+    if (data.type === 'text' || !data.publicIds) return;
+    const urls = Array.isArray(data.content) ? data.content : [data.content];
+    const pIds = Array.isArray(data.publicIds) ? data.publicIds : [data.publicIds];
+
+    for (let i = 0; i < pIds.length; i++) {
+        const pid = pIds[i];
+        let url = urls[i];
+        if (!url && typeof data.content === 'string') url = data.content;
+
+        let rType = data.type === 'image' ? 'image' : 'raw';
+
+        // 1. URL이 존재한다면 URL 경로의 타입(image/video/raw) 참조 (가장 정확함)
+        if (url && typeof url === 'string') {
+            if (url.includes('/image/upload/')) rType = 'image';
+            else if (url.includes('/video/upload/')) rType = 'video';
+            else if (url.includes('/raw/upload/')) rType = 'raw';
+        }
+        // 2. URL이 없다면 (업로드 중단 등) public_id에 기록해둔 확장자로 파일 추론
+        else if (pid && typeof pid === 'string') {
+            if (pid.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)) rType = 'image';
+            else if (pid.match(/\.(mp4|mov|webm|avi|mkv)$/i)) rType = 'video';
+        }
+
+        await deleteCloudinaryFile(pid, rType);
+    }
 }
 
 // === 1차 & 3차 방어 통합: 접속 시 일괄 청소 로직 ===
@@ -155,17 +171,11 @@ async function loadUserData(uid) {
             const cardData = docSnap.data();
             const docId = docSnap.id;
 
-            // ★★★ [3차 방어] 업로드 중단된 찌꺼기 파일 청소 ★★★
-            if (cardData.status === 'uploading') {
-                console.log(`🧹 [중단된 업로드 청소] 찌꺼기 카드 발견. 삭제 진행...`);
+            // ★★★ [3차 방어] 업로드/삭제 중단된 찌꺼기 파일 청소 ★★★
+            if (cardData.status === 'uploading' || cardData.status === 'deleting') {
+                console.log(`🧹 [비정상 카드 청소] 비정상 상태(${cardData.status}) 발견. 삭제 진행...`);
                 // 클라우드에 중간까지 올라간 파일이 있다면 모두 삭제
-                if (cardData.publicIds && cardData.publicIds.length > 0) {
-                    const rType = cardData.type === 'image' ? 'image' : 'raw';
-                    const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
-                    for (const pid of pIds) {
-                        await deleteCloudinaryFile(pid, rType);
-                    }
-                }
+                await deleteCardCloudinaryFiles(cardData);
                 // 불완전한 DB 카드 파기
                 await deleteDoc(doc(db, 'cards', docId));
                 trashCleanedCount++;
@@ -183,13 +193,7 @@ async function loadUserData(uid) {
 
             if (isExpired) {
                 console.log(`🧨 [자동 폭파] 기간 만료 카드: ${cardData.name}`);
-                if (cardData.type !== 'text' && cardData.publicIds) {
-                    const rType = cardData.type === 'image' ? 'image' : 'raw';
-                    const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
-                    for (const pid of pIds) {
-                        await deleteCloudinaryFile(pid, rType);
-                    }
-                }
+                await deleteCardCloudinaryFiles(cardData);
                 await deleteDoc(doc(db, 'cards', docId));
 
                 expiredCount++;
@@ -218,9 +222,9 @@ async function loadUserData(uid) {
             setTimeout(() => alert(alertMsg), 300);
         }
 
-        // 2. 업로드 중단 파일 청소 알림
+        // 2. 비정상 작업 중단 파일 청소 알림
         if (trashCleanedCount > 0) {
-            setTimeout(() => alert(`이전에 중단되었던 업로드가 ${trashCleanedCount}건 있었습니다. 중단 전 업로드된 데이터가 서버에서 자동 삭제되었습니다.`), 600);
+            setTimeout(() => alert(`이전에 비정상 중단되었던 작업(업로드/삭제)이 ${trashCleanedCount}건 존재하여 연관된 데이터가 서버에서 자동 정리되었습니다.`), 600);
         }
 
         // 3. 고스트 카드 알림
@@ -267,7 +271,7 @@ saveMemoBtn.addEventListener('click', async () => {
         const docRef = await addDoc(collection(db, "cards"), cardData);
         createCard(cardData, docRef.id);
         memoModal.style.display = 'none'; memoTitleInput.value = ''; memoInput.value = '';
-    } catch (error) { console.error("메모 저장 실패:", error); } 
+    } catch (error) { console.error("메모 저장 실패:", error); }
     finally { saveMemoBtn.disabled = false; }
 });
 
@@ -281,30 +285,11 @@ saveLinkBtn.addEventListener('click', async () => {
         const docRef = await addDoc(collection(db, "cards"), cardData);
         createCard(cardData, docRef.id);
         linkModal.style.display = 'none'; linkInput.value = '';
-    } catch (error) { console.error("링크 저장 실패:", error); } 
+    } catch (error) { console.error("링크 저장 실패:", error); }
     finally { saveLinkBtn.disabled = false; }
 });
 
-async function sha1(str) {
-    const buffer = new TextEncoder("utf-8").encode(str);
-    const digest = await crypto.subtle.digest("SHA-1", buffer);
-    return Array.from(new Uint8Array(digest)).map(x => x.toString(16).padStart(2, '0')).join('');
-}
 
-async function deleteCloudinaryFile(publicId, resourceType = 'image') {
-    const cloudName = 'dxcfrulyd'; const apiKey = '822956219941674'; const apiSecret = 'rZhoHQ7DOnbmIh0iZgUNfTfzuUs';
-    const timestamp = Math.floor(Date.now() / 1000);
-    const signatureString = `public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
-    const signature = await sha1(signatureString);
-
-    const formData = new FormData();
-    formData.append('public_id', publicId); formData.append('api_key', apiKey);
-    formData.append('timestamp', timestamp); formData.append('signature', signature);
-    const url = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`;
-
-    try { await fetch(url, { method: 'POST', body: formData }); } 
-    catch (error) { console.error("Cloudinary 삭제 실패:", error); }
-}
 
 let totalUsedSpace = 0;
 const MAX_SPACE = 100 * 1024 * 1024;
@@ -318,7 +303,7 @@ async function handleFilesUpload(files, type) {
     for (let file of fileArray) totalNewSize += file.size;
 
     if (totalUsedSpace + totalNewSize > MAX_SPACE) {
-        alert(`전체 할당 용량(100MB)을 초과할 수 없습니다.`); return;
+        alert(`전체 할당 용량(100MB)을 초과할 수 없습니다. 추가하려는 용량: ${(totalNewSize / (1024 * 1024)).toFixed(2)}MB`); return;
     }
 
     const overlay = document.getElementById('uploadOverlay');
@@ -327,17 +312,10 @@ async function handleFilesUpload(files, type) {
     const overlayPct = document.getElementById('uploadProgressPct');
     const overlayCount = document.getElementById('uploadCountLabel');
     overlay.classList.add('active');
-    
+
     const uploadTimestamp = new Date().getTime();
     const uid = auth.currentUser.uid;
     let isImageGroup = type === 'image';
-
-    // 1. [핵심] 업로드 시작 전, 모든 파일의 ID와 이름을 미리 생성합니다.
-    const preGeneratedPublicIds = fileArray.map((file, i) => {
-        const nameBase = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-        return `${nameBase}_${uploadTimestamp}_${i}`;
-    });
-    const preGeneratedNames = fileArray.map(file => file.name);
 
     const sizeInMB = totalNewSize / (1024 * 1024);
     let expirationDays = 30;
@@ -345,93 +323,130 @@ async function handleFilesUpload(files, type) {
 
     let docRef;
     try {
-        // 2. [변경] 업로드 시작 전, 미리 생성한 ID 리스트를 포함하여 DB에 카드를 먼저 만듭니다.
+        // [1] status: 'uploading' 꼬리표를 단 빈 카드를 미리 생성합니다.
         docRef = await addDoc(collection(db, "cards"), {
             uid: uid,
             type: isImageGroup ? 'image' : 'file',
             content: [],
-            originalNames: preGeneratedNames,
-            publicIds: preGeneratedPublicIds, // 미리 기록!
+            originalNames: [],
+            publicIds: [],
             name: "업로드 진행 중...",
-            size: (totalNewSize / (1024 * 1024)).toFixed(2),
+            size: "0.00",
             expirationDays: expirationDays,
             originalDuration: expirationDays,
             uploadTime: uploadTimestamp,
-            fileCount: fileArray.length,
-            status: 'uploading' 
+            fileCount: 0,
+            status: 'uploading'
         });
     } catch (e) {
         console.error("임시 문서 생성 에러: ", e);
-        overlay.classList.remove('active'); return;
+        alert("업로드 준비 중 오류가 발생했습니다.");
+        overlay.classList.remove('active');
+        return;
     }
 
     let fileUrls = [];
-    const cloudName = 'dxcfrulyd';
+    let originalNamesList = [];
+    let publicIdsList = [];
+    let groupSize = 0;
 
     for (let i = 0; i < fileArray.length; i++) {
         let file = fileArray[i];
-        if (isImageGroup) file = await resizeImage(file);
+        let finalFileName = file.name;
+
+        if (isImageGroup) {
+            file = await resizeImage(file);
+            finalFileName = file.name;
+        }
+
+        originalNamesList.push(finalFileName);
 
         const formData = new FormData();
         formData.append('file', file);
         formData.append('upload_preset', 'filemover');
-        // 3. 미리 생성해서 DB에 적어둔 그 ID를 그대로 사용합니다.
-        formData.append('public_id', preGeneratedPublicIds[i]); 
-        formData.append('folder', uid); 
 
-        overlayFilename.innerText = file.name;
+        // ★★★ [폴더 지정 핵심 부분] ★★★
+        // 1. 파일 이름에서 확장자를 뺀 순수 이름만 추출해 (예: image.png -> image)
+        const nameBase = finalFileName.substring(0, finalFileName.lastIndexOf('.')) || finalFileName;
+        // 2. public_id에서는 uid 경로를 삭제하고 순수 파일명+시간값만 남겨
+        const newPublicId = `${nameBase}_${uploadTimestamp}_${i}`;
+        formData.append('public_id', newPublicId);
+        // 3. ★ 핵심: folder 라는 라벨을 새로 만들어서 uid(사용자 고유번호) 폴더에 담으라고 명시해
+        formData.append('folder', uid);
+
+        const cloudName = 'dxcfrulyd';
+        overlayFilename.innerText = finalFileName;
+        overlayBar.style.width = '0%'; overlayPct.innerText = '0%';
         overlayCount.innerText = fileArray.length > 1 ? `파일 ${i + 1} / ${fileArray.length}` : '';
+
+        // ★ [수정] 업로드 중단 시 찌꺼기 파일 삭제를 위해 업로드 전 public_id 미리 기록
+        // 일반 파일(raw 타입)인 경우 Cloudinary가 원본 파일의 확장자를 public_id 끝에 강제로 붙이므로 그 형식을 똑같이 맞춰줌
+        const dotIndex = finalFileName.lastIndexOf('.');
+        const ext = dotIndex !== -1 ? finalFileName.substring(dotIndex) : '';
+        const expectedPublicId = isImageGroup ? `${uid}/${newPublicId}` : `${uid}/${newPublicId}${ext}`;
+
+        publicIdsList.push(expectedPublicId);
+        await updateDoc(doc(db, 'cards', docRef.id), { publicIds: publicIdsList });
 
         try {
             const data = await new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
-                xhr.upload.onprogress = (e) => {
-                    if (e.lengthComputable) {
-                        const pct = Math.round((e.loaded / e.total) * 100);
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const pct = Math.round((event.loaded / event.total) * 100);
                         overlayBar.style.width = pct + '%'; overlayPct.innerText = pct + '%';
                     }
                 };
-                xhr.onload = () => resolve(JSON.parse(xhr.responseText));
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
+                    else reject(new Error(`HTTP 오류: ${xhr.status}`));
+                };
                 xhr.onerror = () => reject(new Error('네트워크 오류'));
                 xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`);
                 xhr.send(formData);
             });
 
             if (data.secure_url) {
-                fileUrls.push(data.secure_url);
                 totalUsedSpace += file.size;
+                groupSize += file.size;
+                fileUrls.push(data.secure_url);
+
+                // 만약 예측한 확장자와 다를 경우를 대비하여, 업로드 성공 시 배열 안의 값을 Cloudinary가 확정한 진짜 public_id로 교체
+                publicIdsList[publicIdsList.length - 1] = data.public_id;
+            } else {
+                alert(`${finalFileName} 업로드에 실패했습니다.`);
             }
         } catch (error) {
             console.error("파일 업로드 에러:", error);
+            alert(`${finalFileName} 전송에 실패했습니다.`);
         }
     }
 
     overlay.classList.remove('active');
 
+    // [3] 모든 업로드가 끝난 후, 카드를 '완료(complete)' 상태로 최종 저장
     if (fileUrls.length > 0) {
         updateQuotaUI();
-        let finalCardName = fileArray.length > 1 ? `${preGeneratedNames[0]} 외 ${fileArray.length - 1}건` : preGeneratedNames[0];
+        const finalSizeMB = (groupSize / (1024 * 1024)).toFixed(2);
+        let finalCardName = fileArray.length > 1 ? `${originalNamesList[0]} 외 ${originalNamesList.length - 1}건` : originalNamesList[0];
 
-        // 4. 모든 업로드 완료 후 상태만 'complete'로 변경합니다.
-        await updateDoc(doc(db, 'cards', docRef.id), {
+        const finalCardData = {
+            uid: uid,
+            type: isImageGroup ? 'image' : 'file',
             content: fileUrls.length === 1 ? fileUrls[0] : fileUrls,
+            originalNames: originalNamesList.length === 1 ? originalNamesList[0] : originalNamesList,
+            publicIds: publicIdsList.length === 1 ? publicIdsList[0] : publicIdsList,
             name: finalCardName,
-            status: 'complete'
-        });
-        
-        // 화면에 카드 표시 (이미 DB에 다 있으므로 data 객체 재구성)
-        const finalData = {
-            uid, type: isImageGroup ? 'image' : 'file',
-            content: fileUrls.length === 1 ? fileUrls[0] : fileUrls,
-            originalNames: preGeneratedNames.length === 1 ? preGeneratedNames[0] : preGeneratedNames,
-            publicIds: preGeneratedPublicIds.length === 1 ? preGeneratedPublicIds[0] : preGeneratedPublicIds,
-            name: finalCardName,
-            size: (totalNewSize / (1024 * 1024)).toFixed(2),
-            expirationDays, originalDuration: expirationDays,
+            size: finalSizeMB,
+            expirationDays: expirationDays,
+            originalDuration: expirationDays,
             uploadTime: new Date().getTime(),
-            status: 'complete'
+            fileCount: fileUrls.length,
+            status: 'complete' // ★ 정상 완료 태그
         };
-        createCard(finalData, docRef.id);
+
+        await updateDoc(doc(db, 'cards', docRef.id), finalCardData);
+        createCard(finalCardData, docRef.id);
     } else {
         await deleteDoc(doc(db, 'cards', docRef.id));
     }
@@ -441,7 +456,7 @@ function resizeImage(file) {
     return new Promise((resolve) => {
         const option = resizeOption.value;
         if (option === 'original') {
-            resolve(file); 
+            resolve(file);
             return;
         }
 
@@ -481,26 +496,34 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
     if (!auth.currentUser) return;
     if (!confirm('모든 카드를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
 
+    const deleteOverlay = document.getElementById('deleteOverlay');
+    if (deleteOverlay) deleteOverlay.classList.add('active');
+
     const uid = auth.currentUser.uid;
     try {
         const q = query(collection(db, 'cards'), where('uid', '==', uid));
         const snapshot = await getDocs(q);
-        
+
         for (const d of snapshot.docs) {
             const cardData = d.data();
-            if (cardData.type !== 'text' && cardData.publicIds) {
-                const rType = cardData.type === 'image' ? 'image' : 'raw';
-                const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
-                for (const pid of pIds) await deleteCloudinaryFile(pid, rType);
-            }
+            await deleteCardCloudinaryFiles(cardData);
             await deleteDoc(doc(db, 'cards', d.id));
         }
 
-        document.getElementById('cardContainer').innerHTML = ''; totalUsedSpace = 0; updateQuotaUI();
-    } catch (error) { console.error('전체 삭제 중 오류 발생:', error); alert('초기화에 실패했습니다.'); }
+        document.getElementById('cardContainer').innerHTML = '';
+        totalUsedSpace = 0;
+        updateQuotaUI();
+
+        setTimeout(() => alert('모든 카드가 완전히 삭제/초기화 되었습니다.'), 100);
+    } catch (error) {
+        console.error('전체 삭제 중 오류 발생:', error);
+        alert('초기화에 실패했습니다.');
+    } finally {
+        if (deleteOverlay) deleteOverlay.classList.remove('active');
+    }
 });
 
-let currentFilter = 'all'; 
+let currentFilter = 'all';
 document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', () => {
         document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
@@ -544,9 +567,9 @@ function createCard(data, docId = null) {
 
     let badgeClass = 'badge-file'; let badgeText = 'FILE';
     if (data.type === 'text') {
-        if (data.content.startsWith('http')) { badgeClass = 'badge-link'; badgeText = 'WEB'; card.dataset.cardType = 'link'; } 
+        if (data.content.startsWith('http')) { badgeClass = 'badge-link'; badgeText = 'WEB'; card.dataset.cardType = 'link'; }
         else { badgeClass = 'badge-memo'; badgeText = 'MEMO'; card.dataset.cardType = 'memo'; }
-    } else if (data.type === 'image') { badgeClass = 'badge-photo'; badgeText = 'PHOTO'; card.dataset.cardType = 'image'; } 
+    } else if (data.type === 'image') { badgeClass = 'badge-photo'; badgeText = 'PHOTO'; card.dataset.cardType = 'image'; }
     else { card.dataset.cardType = 'file'; }
 
     let titleText = data.name || '제목 없음'; let descText = ''; let svgIcon = '';
@@ -568,15 +591,14 @@ function createCard(data, docId = null) {
 
     const moreBtnWrap = document.createElement('div'); moreBtnWrap.style.position = 'relative';
     moreBtnWrap.innerHTML = `
-        <button class="action-icon-btn more-btn"><span class="material-symbols-outlined">more_vert</span></button>
-        <div class="delete-menu" style="display:none; position:absolute; right:0; top:100%; background:white; border:1px solid #ddd; border-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.1); z-index:10; min-width:80px;">
-            <button class="delete-action-btn" style="color:#dc3545; background:none; border:none; padding:10px 16px; width:100%; text-align:left; cursor:pointer; white-space:nowrap; font-size:13px;">삭제</button>
-        </div>
+        <button class="action-icon-btn delete-action-btn" style="color:#dc3545; padding: 4px;" title="카드 삭제">
+            <span class="material-symbols-outlined" style="font-size: 20px;">delete</span>
+        </button>
     `;
 
     topRow.appendChild(badgeEl); topRow.appendChild(moreBtnWrap); card.appendChild(topRow);
     const bodyDiv = document.createElement('div'); bodyDiv.className = 'card-body';
-    
+
     bodyDiv.innerHTML = `
         <div style="display: flex; gap: 12px; align-items: flex-start; margin-bottom: 4px;">
             <div style="flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; background: #f8f9fa; border-radius: 8px;">${svgIcon}</div>
@@ -594,7 +616,7 @@ function createCard(data, docId = null) {
     titleEl.title = data.type === 'text' && badgeText !== 'WEB' ? '클릭하여 메모 보기' : '클릭하여 열기 및 다운로드';
     titleEl.addEventListener('click', () => {
         if (data.type === 'text') {
-            if (badgeText === 'WEB') { let url = data.content; if (!url.match(/^https?:\/\//i)) url = 'http://' + url; window.open(url, '_blank'); } 
+            if (badgeText === 'WEB') { let url = data.content; if (!url.match(/^https?:\/\//i)) url = 'http://' + url; window.open(url, '_blank'); }
             else { showMemoViewModal(data, docId); }
         } else {
             let modalData = data;
@@ -603,42 +625,41 @@ function createCard(data, docId = null) {
         }
     });
 
-    const moreBtn = moreBtnWrap.querySelector('.more-btn');
-    const deleteMenu = moreBtnWrap.querySelector('.delete-menu');
     const deleteBtn = moreBtnWrap.querySelector('.delete-action-btn');
 
-    moreBtn.addEventListener('click', (e) => {
-        e.stopPropagation(); const isVisible = deleteMenu.style.display === 'block';
-        document.querySelectorAll('.delete-menu').forEach(m => m.style.display = 'none');
-        if (!isVisible) deleteMenu.style.display = 'block';
-    });
-
-    document.addEventListener('click', () => { deleteMenu.style.display = 'none'; });
-
     deleteBtn.addEventListener('click', async (e) => {
-        e.stopPropagation(); deleteMenu.style.display = 'none';
+        e.stopPropagation();
         if (!confirm('정말 이 카드를 삭제하시겠습니까?')) return;
-        
+
+        const deleteOverlay = document.getElementById('deleteOverlay');
+        if (deleteOverlay) deleteOverlay.classList.add('active');
+
         try {
-            if (data.type !== 'text' && data.publicIds) {
-                const rType = data.type === 'image' ? 'image' : 'raw';
-                const pIds = Array.isArray(data.publicIds) ? data.publicIds : [data.publicIds];
-                for (const pid of pIds) await deleteCloudinaryFile(pid, rType);
-            }
+            // ★ [수정] 네트워크 단절/앱 강제 종료 대비 상태를 'deleting'으로 꼬리표 붙임
+            if (docId) await updateDoc(doc(db, 'cards', docId), { status: 'deleting' });
+
+            await deleteCardCloudinaryFiles(data);
             if (docId) await deleteDoc(doc(db, 'cards', docId));
             if (data.type !== 'text' && data.size) {
                 totalUsedSpace -= (parseFloat(data.size) * 1024 * 1024);
                 if (totalUsedSpace < 0) totalUsedSpace = 0; updateQuotaUI();
             }
             card.remove();
-        } catch (error) { console.error('삭제 중 오류 발생:', error); alert('데이터 삭제에 실패했습니다.'); }
+
+            setTimeout(() => alert(`데이터가 완전히 삭제되었습니다.`), 100);
+        } catch (error) {
+            console.error('삭제 중 오류 발생:', error);
+            alert('데이터 삭제에 실패했습니다.');
+        } finally {
+            if (deleteOverlay) deleteOverlay.classList.remove('active');
+        }
     });
 
     const statusContainer = bodyDiv.querySelector('.card-status-container');
     const statusDiv = statusContainer.querySelector('.card-status');
     const extendBtn = document.createElement('button'); extendBtn.className = 'extend-btn'; extendBtn.innerText = '연장'; extendBtn.style.display = 'none';
-    statusContainer.appendChild(extendBtn); 
-    container.insertBefore(card, container.firstChild); 
+    statusContainer.appendChild(extendBtn);
+    container.insertBefore(card, container.firstChild);
     if (typeof currentFilter !== 'undefined' && currentFilter !== 'all') applyFilter(currentFilter);
 
     setTimeout(() => {
@@ -646,7 +667,7 @@ function createCard(data, docId = null) {
         if (descEl && descEl.scrollHeight > descEl.clientHeight) {
             const toggleBtn = document.createElement('button'); toggleBtn.className = 'toggle-desc-btn'; toggleBtn.innerText = '자세히 보기';
             toggleBtn.addEventListener('click', () => {
-                if (descEl.classList.contains('desc-clamp')) { descEl.classList.remove('desc-clamp'); toggleBtn.innerText = '접기'; card.style.height = 'auto'; } 
+                if (descEl.classList.contains('desc-clamp')) { descEl.classList.remove('desc-clamp'); toggleBtn.innerText = '접기'; card.style.height = 'auto'; }
                 else { descEl.classList.add('desc-clamp'); toggleBtn.innerText = '자세히 보기'; card.style.height = '120px'; }
             });
             descEl.parentElement.appendChild(toggleBtn);
@@ -660,8 +681,8 @@ function createCard(data, docId = null) {
             if (timeLeft <= 0) { statusDiv.innerText = "만료됨 (새로고침 시 자동 정리)"; extendBtn.style.display = 'none'; clearInterval(interval); return; }
             const hoursLeft = timeLeft / (1000 * 60 * 60);
             statusDiv.innerText = hoursLeft < 24 ? `${Math.floor(hoursLeft)}시간 후 만료` : `${Math.floor(hoursLeft / 24) + 1}일 후 만료`;
-            
-            if (hoursLeft <= 48) { extendBtn.style.display = 'inline-block'; statusDiv.style.color = '#e74c3c'; statusDiv.style.fontWeight = 'bold'; } 
+
+            if (hoursLeft <= 48) { extendBtn.style.display = 'inline-block'; statusDiv.style.color = '#e74c3c'; statusDiv.style.fontWeight = 'bold'; }
             else { extendBtn.style.display = 'none'; statusDiv.style.color = '#555'; statusDiv.style.fontWeight = 'normal'; }
         }, 1000);
 
@@ -670,7 +691,7 @@ function createCard(data, docId = null) {
             try {
                 if (docId) await updateDoc(doc(db, 'cards', docId), { uploadTime: newUploadTime });
                 data.uploadTime = newUploadTime; expireTime = newUploadTime + (data.originalDuration * 24 * 60 * 60 * 1000);
-                alert(`${data.originalDuration}일로 기간이 연장되었습니다.`); extendBtn.style.display = 'none'; 
+                alert(`${data.originalDuration}일로 기간이 연장되었습니다.`); extendBtn.style.display = 'none';
             } catch (error) { console.error("기간 연장 실패:", error); alert("기간 연장에 실패했습니다."); }
         };
     } else { statusDiv.innerText = "영구 보관"; statusDiv.style.color = "#555"; }
