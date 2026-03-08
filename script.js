@@ -332,11 +332,10 @@ async function handleFilesUpload(files, type) {
     const uid = auth.currentUser.uid;
     let isImageGroup = type === 'image';
 
-    // 1. [핵심] 폴더 경로(uid/)가 포함된 전체 ID를 미리 생성합니다.
+    // 1. [핵심] 업로드 시작 전, 모든 파일의 ID와 이름을 미리 생성합니다.
     const preGeneratedPublicIds = fileArray.map((file, i) => {
         const nameBase = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-        // 삭제 시 혼선을 방지하기 위해 'uid/파일이름' 형태로 저장합니다.
-        return `${uid}/${nameBase}_${uploadTimestamp}_${i}`;
+        return `${nameBase}_${uploadTimestamp}_${i}`;
     });
     const preGeneratedNames = fileArray.map(file => file.name);
 
@@ -346,13 +345,13 @@ async function handleFilesUpload(files, type) {
 
     let docRef;
     try {
-        // 2. [가장 중요] 업로드 '시작 전'에 장부에 모든 ID를 미리 적어둡니다. (status: uploading)
+        // 2. [변경] 업로드 시작 전, 미리 생성한 ID 리스트를 포함하여 DB에 카드를 먼저 만듭니다.
         docRef = await addDoc(collection(db, "cards"), {
             uid: uid,
             type: isImageGroup ? 'image' : 'file',
             content: [],
             originalNames: preGeneratedNames,
-            publicIds: preGeneratedPublicIds, // 중단되어도 이 기록을 보고 지웁니다.
+            publicIds: preGeneratedPublicIds, // 미리 기록!
             name: "업로드 진행 중...",
             size: (totalNewSize / (1024 * 1024)).toFixed(2),
             expirationDays: expirationDays,
@@ -376,8 +375,9 @@ async function handleFilesUpload(files, type) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('upload_preset', 'filemover');
-        // 3. 미리 생성한 '폴더 포함 ID'를 클라우디너리에 그대로 전달합니다.
+        // 3. 미리 생성해서 DB에 적어둔 그 ID를 그대로 사용합니다.
         formData.append('public_id', preGeneratedPublicIds[i]); 
+        formData.append('folder', uid); 
 
         overlayFilename.innerText = file.name;
         overlayCount.innerText = fileArray.length > 1 ? `파일 ${i + 1} / ${fileArray.length}` : '';
@@ -403,7 +403,6 @@ async function handleFilesUpload(files, type) {
             }
         } catch (error) {
             console.error("파일 업로드 에러:", error);
-            // 개별 파일 실패 시에도 루프는 계속 돌아가도록 둡니다.
         }
     }
 
@@ -413,14 +412,14 @@ async function handleFilesUpload(files, type) {
         updateQuotaUI();
         let finalCardName = fileArray.length > 1 ? `${preGeneratedNames[0]} 외 ${fileArray.length - 1}건` : preGeneratedNames[0];
 
-        // 4. 모든 업로드 완료 후 상태를 'complete'로 변경하여 청소 대상에서 제외시킵니다.
+        // 4. 모든 업로드 완료 후 상태만 'complete'로 변경합니다.
         await updateDoc(doc(db, 'cards', docRef.id), {
             content: fileUrls.length === 1 ? fileUrls[0] : fileUrls,
             name: finalCardName,
             status: 'complete'
         });
         
-        // UI 반영을 위한 데이터 객체
+        // 화면에 카드 표시 (이미 DB에 다 있으므로 data 객체 재구성)
         const finalData = {
             uid, type: isImageGroup ? 'image' : 'file',
             content: fileUrls.length === 1 ? fileUrls[0] : fileUrls,
@@ -434,7 +433,6 @@ async function handleFilesUpload(files, type) {
         };
         createCard(finalData, docRef.id);
     } else {
-        // 하나도 안 올라갔다면 카드 자체를 삭제
         await deleteDoc(doc(db, 'cards', docRef.id));
     }
 }
