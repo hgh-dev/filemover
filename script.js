@@ -381,10 +381,13 @@ async function handleFilesUpload(files, type) {
         formData.append('upload_preset', 'filemover');
 
         // ★★★ [폴더 지정 핵심 부분] ★★★
-        // 별도의 folder 명령어를 지우고 public_id 안에 폴더 경로(uid/)를 결합해서 보냅니다!
+        // 1. 파일 이름에서 확장자를 뺀 순수 이름만 추출해 (예: image.png -> image)
         const nameBase = finalFileName.substring(0, finalFileName.lastIndexOf('.')) || finalFileName;
-        const newPublicId = `${uid}/${nameBase}_${uploadTimestamp}_${i}`;
+        // 2. public_id에서는 uid 경로를 삭제하고 순수 파일명+시간값만 남겨
+        const newPublicId = `${nameBase}_${uploadTimestamp}_${i}`;
         formData.append('public_id', newPublicId); 
+        // 3. ★ 핵심: folder 라는 라벨을 새로 만들어서 uid(사용자 고유번호) 폴더에 담으라고 명시해
+        formData.append('folder', uid);
 
         const cloudName = 'dxcfrulyd';
         overlayFilename.innerText = finalFileName;
