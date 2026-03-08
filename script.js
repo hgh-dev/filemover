@@ -212,7 +212,7 @@ saveMemoBtn.addEventListener('click', async () => {
     const cardData = {
         uid: auth.currentUser.uid,
         type: 'text',
-        name: title || '제목없음', // 제목 미입력 시 기본값 처리
+        name: title || '제목없음', 
         content: text,
         expirationDays: 'permanent',
         uploadTime: new Date().getTime()
@@ -258,6 +258,42 @@ saveLinkBtn.addEventListener('click', async () => {
     }
 });
 
+// ★★★ 추가된 해시(암호화) 함수: Cloudinary 서명용 ★★★
+async function sha1(str) {
+    const buffer = new TextEncoder("utf-8").encode(str);
+    const digest = await crypto.subtle.digest("SHA-1", buffer);
+    return Array.from(new Uint8Array(digest)).map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+// ★★★ 추가된 Cloudinary 파일 삭제 함수 ★★★
+async function deleteCloudinaryFile(publicId, resourceType = 'image') {
+    const cloudName = 'dxcfrulyd';
+    const apiKey = '822956219941674';
+    const apiSecret = 'rZhoHQ7DOnbmIh0iZgUNfTfzuUs';
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    // 보안 서명 생성: public_id, timestamp, api_secret을 조합하여 암호화
+    const signatureString = `public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
+    const signature = await sha1(signatureString);
+
+    const formData = new FormData();
+    formData.append('public_id', publicId);
+    formData.append('api_key', apiKey);
+    formData.append('timestamp', timestamp);
+    formData.append('signature', signature);
+
+    // 삭제를 위한 Cloudinary API 호출
+    const url = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`;
+
+    try {
+        const response = await fetch(url, { method: 'POST', body: formData });
+        const result = await response.json();
+        console.log(`Cloudinary 삭제 결과 (${publicId}):`, result);
+    } catch (error) {
+        console.error("Cloudinary 삭제 실패:", error);
+    }
+}
+
 // === 다중 파일 처리 함수 ===
 let totalUsedSpace = 0;
 const MAX_SPACE = 100 * 1024 * 1024;
@@ -265,8 +301,6 @@ const MAX_SPACE = 100 * 1024 * 1024;
 async function handleFilesUpload(files, type) {
     if (!files || files.length === 0) return;
 
-    // FileList는 DOM 요소와 연결된 Live Collection이므로, 비동기 작업 중 input.value가 초기화되면 같이 비워집니다.
-    // 이를 방지하기 위해 배열로 복사해서 사용합니다.
     const fileArray = Array.from(files);
 
     let totalNewSize = 0;
@@ -282,19 +316,17 @@ async function handleFilesUpload(files, type) {
     let isImageGroup = type === 'image';
     let fileUrls = [];
     let originalNames = [];
+    let publicIds = []; // ★★★ public_id 저장을 위한 배열 추가
     let groupSize = 0;
 
-    // 업로드 오버레이 UI 요소
     const overlay = document.getElementById('uploadOverlay');
     const overlayFilename = document.getElementById('uploadFilename');
     const overlayBar = document.getElementById('uploadProgressBar');
     const overlayPct = document.getElementById('uploadProgressPct');
     const overlayCount = document.getElementById('uploadCountLabel');
 
-    // 오버레이 표시
     overlay.classList.add('active');
 
-    // 파일 등록 진행 (Cloudinary API 업로드 - XHR로 진행률 추적)
     for (let i = 0; i < fileArray.length; i++) {
         let file = fileArray[i];
         if (isImageGroup) {
@@ -305,21 +337,17 @@ async function handleFilesUpload(files, type) {
         formData.append('file', file);
         formData.append('upload_preset', 'filemover');
 
-        // 원본 파일명 유지 (확장자 제외한 이름만 public_id로 전송)
         const originalNameBase = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
         formData.append('public_id', originalNameBase);
 
-        // dxcfrulyd 로 설정된 Cloud Name 전달
         const cloudName = 'dxcfrulyd';
 
-        // 프로그레스 UI 업데이트
         overlayFilename.innerText = file.name;
         overlayBar.style.width = '0%';
         overlayPct.innerText = '0%';
         overlayCount.innerText = fileArray.length > 1 ? `파일 ${i + 1} / ${fileArray.length}` : '';
 
         try {
-            // XHR을 Promise로 감싸 업로드 진행률 추적
             const data = await new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
 
@@ -348,9 +376,9 @@ async function handleFilesUpload(files, type) {
             if (data.secure_url) {
                 totalUsedSpace += file.size;
                 groupSize += file.size;
-                // 안전한 클라우디너리 URL 보관 및 원본 배열명 보관
                 fileUrls.push(data.secure_url);
                 originalNames.push(file.name);
+                publicIds.push(data.public_id); // ★★★ DB에 저장할 public_id 보관
             } else {
                 console.error("Cloudinary 응답 에러:", data);
                 alert("일부 파일 업로드에 실패했습니다.");
@@ -361,7 +389,6 @@ async function handleFilesUpload(files, type) {
         }
     }
 
-    // 오버레이 숨김
     overlay.classList.remove('active');
 
     updateQuotaUI();
@@ -374,8 +401,9 @@ async function handleFilesUpload(files, type) {
     const cardData = {
         uid: auth.currentUser.uid,
         type: isImageGroup ? 'image' : 'file',
-        content: fileUrls.length === 1 ? fileUrls[0] : fileUrls, // 다중 파일 배열 지원
-        originalNames: originalNames.length === 1 ? originalNames[0] : originalNames, // 파일명도 배열로 동일하게 보관
+        content: fileUrls.length === 1 ? fileUrls[0] : fileUrls, 
+        originalNames: originalNames.length === 1 ? originalNames[0] : originalNames, 
+        publicIds: publicIds.length === 1 ? publicIds[0] : publicIds, // ★★★ DB에 publicId 추가
         name: fileArray.length > 1 ? `${fileArray[0].name} 양식 외 ${fileArray.length - 1}건` : fileArray[0].name,
         size: sizeInMB.toFixed(2),
         expirationDays: expirationDays,
@@ -384,7 +412,6 @@ async function handleFilesUpload(files, type) {
         fileCount: fileArray.length
     };
 
-    // DB 기록
     try {
         const docRef = await addDoc(collection(db, "cards"), cardData);
         createCard(cardData, docRef.id);
@@ -419,7 +446,6 @@ function resizeImage(file) {
 
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             canvas.toBlob((blob) => {
-                // 리사이즈된 파일명: "resize_원본파일명" 형식
                 const resizedFile = new File([blob], `resize_${file.name}`, {
                     type: file.type,
                     lastModified: Date.now()
@@ -432,7 +458,7 @@ function resizeImage(file) {
 
 photoInput.addEventListener('change', (e) => {
     handleFilesUpload(e.target.files, 'image');
-    photoInput.value = ''; // 동일 파일 재선택을 위해 초기화
+    photoInput.value = ''; 
 });
 
 generalFileInput.addEventListener('change', (e) => {
@@ -445,20 +471,30 @@ function updateQuotaUI() {
     document.getElementById('quotaInfo').innerText = `현재 사용량: ${mb} MB / 100 MB`;
 }
 
-// 초기화 버튼: 현재 사용자의 모든 카드 삭제
+// ★★★ 초기화 버튼 로직 수정 (클라우디너리 삭제 포함) ★★★
 document.getElementById('resetAllBtn').addEventListener('click', async () => {
     if (!auth.currentUser) return;
     if (!confirm('모든 카드를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
 
     const uid = auth.currentUser.uid;
     try {
-        // Firestore에서 현재 사용자의 카드 문서 전체 조회 후 삭제
         const q = query(collection(db, 'cards'), where('uid', '==', uid));
         const snapshot = await getDocs(q);
-        const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'cards', d.id)));
-        await Promise.all(deletePromises);
+        
+        for (const d of snapshot.docs) {
+            const cardData = d.data();
+            // 1. 실제 파일이 있으면 Cloudinary 삭제 진행
+            if (cardData.type !== 'text' && cardData.publicIds) {
+                const rType = cardData.type === 'image' ? 'image' : 'raw';
+                const pIds = Array.isArray(cardData.publicIds) ? cardData.publicIds : [cardData.publicIds];
+                for (const pid of pIds) {
+                    await deleteCloudinaryFile(pid, rType);
+                }
+            }
+            // 2. DB 카드 삭제
+            await deleteDoc(doc(db, 'cards', d.id));
+        }
 
-        // UI 상태 초기화
         document.getElementById('cardContainer').innerHTML = '';
         totalUsedSpace = 0;
         updateQuotaUI();
@@ -468,13 +504,11 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
     }
 });
 
-
 // === 필터 칩 이벤트 ===
-let currentFilter = 'all'; // 현재 활성 필터 상태 보관
+let currentFilter = 'all'; 
 
 document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-        // 활성 상태 전환
         document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
 
@@ -489,7 +523,6 @@ function applyFilter(filter) {
         if (filter === 'all') {
             card.style.display = '';
         } else if (filter === 'text') {
-            // 메모(text 타입 중 link가 아닌 것)
             card.style.display = card.dataset.cardType === 'memo' ? '' : 'none';
         } else if (filter === 'link') {
             card.style.display = card.dataset.cardType === 'link' ? '' : 'none';
@@ -501,14 +534,12 @@ function applyFilter(filter) {
     });
 }
 
-// 날짜 포맷 함수 추가 (Ex: 2026.03.02. 22:21)
 function formatDate(timestamp) {
     const d = new Date(timestamp);
     const pad = (n) => n.toString().padStart(2, '0');
     return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}. ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// 강제 파일 다운로드 헬퍼 함수 (Bypass 창열림)
 async function forceDownload(url, filename) {
     try {
         const response = await fetch(url);
@@ -516,7 +547,6 @@ async function forceDownload(url, filename) {
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
-        // Cloudinary URL에서 원본 파일명 추출 시도 (실패 시 기본값)
         let downloadName = filename;
         if (!downloadName) {
             const urlParts = url.split('/');
@@ -529,7 +559,6 @@ async function forceDownload(url, filename) {
         a.remove();
     } catch (error) {
         console.error('다운로드 오류:', error);
-        // CORS 등으로 fetch 실패 시 대비 새 창 열기 (Fallback)
         window.open(url, '_blank');
     }
 }
@@ -540,7 +569,6 @@ function createCard(data, docId = null) {
     card.className = 'list-card';
     if (docId) card.dataset.id = docId;
 
-    // 뱃지 정보 결정
     let badgeClass = 'badge-file';
     let badgeText = 'FILE';
 
@@ -562,17 +590,14 @@ function createCard(data, docId = null) {
         card.dataset.cardType = 'file';
     }
 
-    // 텍스트 가공 및 아이콘 결정
     let titleText = data.name || '제목 없음';
     let descText = '';
     let svgIcon = '';
 
     if (data.type === 'text') {
         if (data.content.startsWith('http')) {
-            // badge-link 색상: #58b2c2
             svgIcon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#58b2c2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>';
         } else {
-            // badge-memo 색상: #e2a849
             svgIcon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e2a849" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>';
         }
 
@@ -581,18 +606,15 @@ function createCard(data, docId = null) {
         }
         descText = data.content;
     } else if (data.type === 'image') {
-        // badge-photo 색상: #e55c91
         svgIcon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e55c91" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>';
         descText = `용량: ${data.size}MB${data.fileCount && data.fileCount > 1 ? ` (총 ${data.fileCount}건)` : ''}`;
     } else {
-        // badge-file 색상: #6a5bbd
         svgIcon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6a5bbd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
         descText = `용량: ${data.size}MB${data.fileCount && data.fileCount > 1 ? ` (총 ${data.fileCount}건)` : ''}`;
     }
 
     const dateStr = formatDate(data.uploadTime);
 
-    // ── 1행: 뱃지(좌) + ⋮ 버튼(우) ──
     const topRow = document.createElement('div');
     topRow.className = 'card-top-row';
 
@@ -600,7 +622,6 @@ function createCard(data, docId = null) {
     badgeEl.className = `card-badge ${badgeClass}`;
     badgeEl.innerText = badgeText;
 
-    // ⋮ 버튼 + 삭제 메뉴
     const moreBtnWrap = document.createElement('div');
     moreBtnWrap.style.position = 'relative';
     moreBtnWrap.innerHTML = `
@@ -614,7 +635,6 @@ function createCard(data, docId = null) {
     topRow.appendChild(moreBtnWrap);
     card.appendChild(topRow);
 
-    // ── 2~5행: 본문 영역 (제목·내용·날짜·만료) ──
     const bodyDiv = document.createElement('div');
     bodyDiv.className = 'card-body';
     bodyDiv.innerHTML = `
@@ -632,7 +652,6 @@ function createCard(data, docId = null) {
     `;
     card.appendChild(bodyDiv);
 
-    // 타이틀 클릭 이벤트
     const titleEl = bodyDiv.querySelector('.card-title');
     titleEl.style.cursor = 'pointer';
     titleEl.title = data.type === 'text' && badgeText !== 'WEB' ? '클릭하여 메모 보기' : '클릭하여 열기 및 다운로드';
@@ -646,10 +665,8 @@ function createCard(data, docId = null) {
                 showMemoViewModal(data, docId);
             }
         } else {
-            // 단일이든 다중이든 항상 팝업 모달로 표시
             let modalData = data;
             if (!Array.isArray(data.content)) {
-                // 단일 파일을 배열로 래핑하여 모달에 전달
                 const fileName = data.originalNames || data.name || '파일';
                 modalData = {
                     ...data,
@@ -662,7 +679,6 @@ function createCard(data, docId = null) {
         }
     });
 
-    // ⋮ 버튼 이벤트
     const moreBtn = moreBtnWrap.querySelector('.more-btn');
     const deleteMenu = moreBtnWrap.querySelector('.delete-menu');
     const deleteBtn = moreBtnWrap.querySelector('.delete-action-btn');
@@ -676,12 +692,28 @@ function createCard(data, docId = null) {
 
     document.addEventListener('click', () => { deleteMenu.style.display = 'none'; });
 
+    // ★★★ 개별 카드 삭제 로직 수정 (클라우디너리 삭제 포함) ★★★
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         deleteMenu.style.display = 'none';
         if (!confirm('정말 이 카드를 삭제하시겠습니까? (클라우드에서도 영구 삭제됩니다)')) return;
+        
         try {
+            // 1. 실제 파일이 있는 경우 Cloudinary에서 삭제
+            if (data.type !== 'text' && data.publicIds) {
+                // Cloudinary에서는 이미지는 'image', 일반 파일은 'raw'로 분류합니다.
+                const rType = data.type === 'image' ? 'image' : 'raw';
+                const pIds = Array.isArray(data.publicIds) ? data.publicIds : [data.publicIds];
+                
+                for (const pid of pIds) {
+                    await deleteCloudinaryFile(pid, rType);
+                }
+            }
+
+            // 2. Firebase DB에서 삭제
             if (docId) await deleteDoc(doc(db, 'cards', docId));
+            
+            // 3. UI 용량 반영
             if (data.type !== 'text' && data.size) {
                 totalUsedSpace -= (parseFloat(data.size) * 1024 * 1024);
                 if (totalUsedSpace < 0) totalUsedSpace = 0;
@@ -694,7 +726,6 @@ function createCard(data, docId = null) {
         }
     });
 
-    // 만료 텍스트 + 연장 버튼 (타이머 로직에서 사용)
     const statusDiv = bodyDiv.querySelector('.card-status');
     const extendBtn = document.createElement('button');
     extendBtn.className = 'extend-btn';
@@ -702,19 +733,12 @@ function createCard(data, docId = null) {
     extendBtn.style.display = 'none';
     statusDiv.after(extendBtn);
 
-    // alias (하위 타이머 로직 호환)
-    const statusContainer = bodyDiv;
+    container.insertBefore(card, container.firstChild); 
 
-
-    container.insertBefore(card, container.firstChild); // 최신 항목이 위에 오도록 수정
-
-    // 현재 필터가 켜져 있으면 새 카드에도 즉시 적용
     if (typeof currentFilter !== 'undefined' && currentFilter !== 'all') {
         applyFilter(currentFilter);
     }
 
-    // 3줄 축소 토글 버튼 동적 생성 제어 로직
-    // 요소가 렌더링된 이후에 높이를 측정하기 위해 약간의 지연 처리
     setTimeout(() => {
         const descEl = bodyDiv.querySelector('.card-desc');
         if (descEl && descEl.scrollHeight > descEl.clientHeight) {
@@ -726,19 +750,18 @@ function createCard(data, docId = null) {
                 if (descEl.classList.contains('desc-clamp')) {
                     descEl.classList.remove('desc-clamp');
                     toggleBtn.innerText = '접기';
-                    card.style.height = 'auto'; // 리스트뷰 높이 자동 확장
+                    card.style.height = 'auto'; 
                 } else {
                     descEl.classList.add('desc-clamp');
                     toggleBtn.innerText = '자세히 보기';
-                    card.style.height = '120px'; // 다시 기본 높이로 축소
+                    card.style.height = '120px'; 
                 }
             });
-            // 설명 아래 껴넣기
             descEl.parentElement.appendChild(toggleBtn);
         }
     }, 10);
 
-    // 타이머 로직 유지
+    // ★★★ 타이머 및 기간 연장 로직 수정 ★★★
     if (data.expirationDays !== 'permanent') {
         let expireTime = data.uploadTime + (data.expirationDays * 24 * 60 * 60 * 1000);
 
@@ -772,9 +795,27 @@ function createCard(data, docId = null) {
             }
         }, 1000);
 
-        extendBtn.onclick = () => {
-            expireTime = new Date().getTime() + (data.originalDuration * 24 * 60 * 60 * 1000);
-            alert(`${data.originalDuration}일로 기간이 연장되었습니다.`);
+        // 연장 버튼 클릭 시 DB의 업로드 시간(uploadTime) 자체를 갱신
+        extendBtn.onclick = async () => {
+            const newUploadTime = new Date().getTime();
+            
+            try {
+                if (docId) {
+                    await updateDoc(doc(db, 'cards', docId), { 
+                        uploadTime: newUploadTime 
+                    });
+                }
+                
+                // 브라우저 타이머에도 바로 반영
+                data.uploadTime = newUploadTime;
+                expireTime = newUploadTime + (data.originalDuration * 24 * 60 * 60 * 1000);
+                
+                alert(`${data.originalDuration}일로 기간이 연장되었습니다.`);
+                extendBtn.style.display = 'none'; // 연장했으니 버튼 숨김
+            } catch (error) {
+                console.error("기간 연장 실패:", error);
+                alert("기간 연장에 실패했습니다.");
+            }
         };
     } else {
         statusDiv.innerText = "영구 보관";
@@ -782,13 +823,11 @@ function createCard(data, docId = null) {
     }
 }
 
-// --- 기타 헬퍼 함수 및 모달 렌더링 ---
 function showMultiDownloadModal(data, badgeText) {
     multiDownloadList.innerHTML = '';
     const isPhoto = badgeText === 'PHOTO';
     const urls = Array.isArray(data.content) ? data.content : [data.content];
 
-    // DB에 저장된 원본파일 배열 이용 (없으면 fallback 생성)
     const names = Array.isArray(data.originalNames) ? data.originalNames : urls.map((url, i) => {
         const urlParts = url.split('/');
         return urlParts[urlParts.length - 1] || `file_${i + 1}`;
@@ -813,10 +852,8 @@ function showMultiDownloadModal(data, badgeText) {
             <span class="material-symbols-outlined" style="margin-right: 0; color: #3498db;">download</span>
         `;
 
-        // 아이템 클릭 시 개별 파일 다운로드
         li.addEventListener('click', () => {
             forceDownload(url, fileName);
-            // 클릭 시 시각적 피드백 제공
             li.style.backgroundColor = '#e8f4fd';
             setTimeout(() => li.style.backgroundColor = '', 300);
         });
@@ -828,7 +865,6 @@ function showMultiDownloadModal(data, badgeText) {
     multiDownloadModal.style.display = 'flex';
 }
 
-// 메모 내용 전체를 보여주는 뷰어 모달을 띄우는 함수
 function showMemoViewModal(data, docId = null) {
     const memoViewModal = document.getElementById('memoViewModal');
     const memoViewTitle = document.getElementById('memoViewTitle');
@@ -837,14 +873,11 @@ function showMemoViewModal(data, docId = null) {
     const memoViewSaveBtn = document.getElementById('memoViewSaveBtn');
     const closeMemoViewBtn = document.getElementById('closeMemoViewBtn');
 
-    // 내용 채우기
     memoViewTitle.innerText = data.name || '제목없음';
     memoViewContent.value = data.content;
 
-    // 닫기 버튼
     closeMemoViewBtn.onclick = () => memoViewModal.style.display = 'none';
 
-    // 복사 버튼 (항상 현재 textarea 내용 기준으로 복사)
     memoViewCopyBtn.onclick = () => {
         navigator.clipboard.writeText(memoViewContent.value).then(() => {
             memoViewCopyBtn.innerText = '복사됨 ✓';
@@ -856,7 +889,6 @@ function showMemoViewModal(data, docId = null) {
         }).catch(err => console.error('복사 실패:', err));
     };
 
-    // 저장 버튼 - Firestore DB 업데이트 및 카드 UI 갱신
     memoViewSaveBtn.onclick = async () => {
         const newContent = memoViewContent.value.trim();
         if (!newContent) return;
@@ -870,14 +902,11 @@ function showMemoViewModal(data, docId = null) {
 
         try {
             if (docId) {
-                // Firestore 문서 업데이트
                 await updateDoc(doc(db, 'cards', docId), { content: newContent });
             }
 
-            // data 객체 메모리 내 갱신 (다음 클릭에 반영)
             data.content = newContent;
 
-            // 카드 DOM에서 desc 영역 즉시 갱신
             const cardEl = document.querySelector(`.list-card[data-id="${docId}"]`);
             if (cardEl) {
                 const descEl = cardEl.querySelector('.card-desc');
