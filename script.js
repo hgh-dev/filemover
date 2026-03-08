@@ -490,7 +490,7 @@ async function handleFilesUpload(files, type) {
         content: fileUrls.length === 1 ? fileUrls[0] : fileUrls, 
         originalNames: originalNames.length === 1 ? originalNames[0] : originalNames, 
         publicIds: publicIds.length === 1 ? publicIds[0] : publicIds, 
-        name: fileArray.length > 1 ? `${fileArray[0].name} 양식 외 ${fileArray.length - 1}건` : fileArray[0].name,
+        name: fileArray.length > 1 ? `${fileArray[0].name} 외 ${fileArray.length - 1}건` : fileArray[0].name,
         size: sizeInMB.toFixed(2),
         expirationDays: expirationDays,
         originalDuration: expirationDays,
