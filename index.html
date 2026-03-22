@@ -792,12 +792,17 @@
     <div id="uploadOverlay">
         <div class="upload-box">
             <div class="upload-label">업로드 중...</div>
+            <div style="font-size: 0.75rem; color: #e74c3c; margin-top: 4px; margin-bottom: 12px; font-weight: bold;">
+                업로드 중에는 앱을 종료하거나 다른 기기에서 앱에 접속하지 마세요.</div>
             <div class="upload-filename" id="uploadFilename">파일명</div>
             <div class="upload-progress-track">
                 <div class="upload-progress-bar" id="uploadProgressBar"></div>
             </div>
             <div class="upload-progress-pct" id="uploadProgressPct">0%</div>
             <div class="upload-count-label" id="uploadCountLabel"></div>
+            <button id="cancelUploadBtn" style="margin-top: 15px; padding: 8px 16px; background-color: #fff; color: #dc3545; border: 1px solid #dc3545; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: background 0.2s; font-weight: bold;">
+                업로드 취소
+            </button>
         </div>
     </div>
 
@@ -996,6 +1001,12 @@
                     <ul class="multi-download-list" id="multiDownloadList">
                         <!-- 동적 추가 -->
                     </ul>
+                    <div style="margin-top: 15px; display: flex; justify-content: center;">
+                        <button id="batchDownloadBtn"
+                            style="width: 100%; padding: 12px; background: #4A90E2; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.2s;">
+                            <span class="material-symbols-outlined">download_for_offline</span> 일괄 다운로드
+                        </button>
+                    </div>
                 </div>
             </div>
 
