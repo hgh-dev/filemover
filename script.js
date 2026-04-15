@@ -24,6 +24,9 @@ const profilePopup = document.getElementById('profilePopup');
 const popupName = document.getElementById('popupName');
 const popupEmail = document.getElementById('popupEmail');
 const popupProfilePic = document.getElementById('popupProfilePic');
+const menuBtn = document.getElementById('menuBtn');
+const tagSidebar = document.getElementById('tagSidebar');
+const sidebarOverlay = document.getElementById('sidebarOverlay');
 const mainAddBtn = document.getElementById('mainAddBtn');
 const addMenuPopup = document.getElementById('addMenuPopup');
 const menuAddMemo = document.getElementById('menuAddMemo');
@@ -31,6 +34,12 @@ const menuAddLink = document.getElementById('menuAddLink');
 const menuAddPhoto = document.getElementById('menuAddPhoto');
 const menuAddFile = document.getElementById('menuAddFile');
 const appTitleBtn = document.getElementById('appTitleBtn');
+const toggleSelectModeBtn = document.getElementById('toggleSelectModeBtn');
+const selectionCountLabel = document.getElementById('selectionCountLabel');
+const selectionActionBar = document.getElementById('selectionActionBar');
+const selectionSummary = document.getElementById('selectionSummary');
+const cancelSelectionBtn = document.getElementById('cancelSelectionBtn');
+const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
 
 const photoInput = document.getElementById('photoInput');
 const generalFileInput = document.getElementById('generalFileInput');
@@ -39,6 +48,7 @@ const resizeOption = document.getElementById('resizeOption');
 const customWidthInput = document.getElementById('customWidth');
 const cancelPhotoBtn = document.getElementById('cancelPhotoBtn');
 const confirmPhotoBtn = document.getElementById('confirmPhotoBtn');
+const dragDropHint = document.getElementById('dragDropHint');
 
 const memoModal = document.getElementById('memoModal');
 const memoTitleInput = document.getElementById('memoTitleInput');
@@ -56,7 +66,95 @@ const closeMultiDownloadBtn = document.getElementById('closeMultiDownloadBtn');
 const multiDownloadList = document.getElementById('multiDownloadList');
 const multiDownloadTitle = document.getElementById('multiDownloadTitle');
 
+const TAG_META = {
+    red: { label: '빨간색', color: '#ff3b30' },
+    orange: { label: '주황색', color: '#ff9500' },
+    yellow: { label: '노란색', color: '#ffcc00' },
+    green: { label: '초록색', color: '#34c759' },
+    blue: { label: '파란색', color: '#007aff' },
+    navy: { label: '남색', color: '#3f51b5' },
+    purple: { label: '보라색', color: '#af52de' },
+    gray: { label: '회색', color: '#8e8e93' }
+};
+let currentFilter = 'all';
+let currentTagFilter = 'none';
+let isSelectionMode = false;
+const selectedCardIds = new Set();
+let pendingDropPayload = null;
+let dragDepth = 0;
+
 closeMultiDownloadBtn.addEventListener('click', () => multiDownloadModal.style.display = 'none');
+
+function updateSelectionModeUI() {
+    const selectedCount = selectedCardIds.size;
+    if (toggleSelectModeBtn) toggleSelectModeBtn.classList.toggle('active', isSelectionMode);
+    if (toggleSelectModeBtn) toggleSelectModeBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">checklist</span>${isSelectionMode ? '선택 중' : '선택'}`;
+    if (selectionCountLabel) selectionCountLabel.innerText = isSelectionMode ? `${selectedCount}개 선택` : '';
+    if (selectionSummary) selectionSummary.innerText = `${selectedCount}개 선택됨`;
+    if (selectionActionBar) selectionActionBar.classList.toggle('active', isSelectionMode);
+    if (mainAddBtn) mainAddBtn.style.display = isSelectionMode ? 'none' : 'flex';
+    if (!isSelectionMode) addMenuPopup.style.display = 'none';
+}
+
+function syncCardSelectionStyles() {
+    document.querySelectorAll('.list-card').forEach((card) => {
+        const docId = card.dataset.id;
+        const indicator = card.querySelector('.card-select-indicator');
+        const selected = !!(docId && selectedCardIds.has(docId));
+        card.classList.toggle('selection-mode', isSelectionMode);
+        card.classList.toggle('selection-selected', selected);
+        if (indicator) indicator.innerText = selected ? '✓' : '';
+    });
+}
+
+function setSelectionMode(enabled) {
+    isSelectionMode = enabled;
+    if (!enabled) selectedCardIds.clear();
+    updateSelectionModeUI();
+    syncCardSelectionStyles();
+}
+
+function toggleCardSelected(docId) {
+    if (!docId) return;
+    if (selectedCardIds.has(docId)) selectedCardIds.delete(docId);
+    else selectedCardIds.add(docId);
+    updateSelectionModeUI();
+    syncCardSelectionStyles();
+}
+
+async function deleteSelectedCards() {
+    if (!auth.currentUser || selectedCardIds.size === 0) return;
+    const selectedCount = selectedCardIds.size;
+    if (!confirm(`선택한 ${selectedCount}개 카드를 삭제하시겠습니까?`)) return;
+
+    const deleteOverlay = document.getElementById('deleteOverlay');
+    if (deleteOverlay) deleteOverlay.classList.add('active');
+
+    try {
+        const uid = auth.currentUser.uid;
+        const q = query(collection(db, 'cards'), where('uid', '==', uid));
+        const snapshot = await getDocs(q);
+
+        for (const d of snapshot.docs) {
+            if (!selectedCardIds.has(d.id)) continue;
+            const cardData = d.data();
+            await updateDoc(doc(db, 'cards', d.id), { status: 'deleting' });
+            await deleteCardCloudinaryFiles(cardData);
+            await deleteDoc(doc(db, 'cards', d.id));
+        }
+
+        setSelectionMode(false);
+        await loadUserData(uid);
+        setTimeout(() => alert(`${selectedCount}개 카드가 삭제되었습니다.`), 100);
+    } catch (error) {
+        console.error('선택 카드 삭제 중 오류:', error);
+        alert('선택 카드 삭제에 실패했습니다.');
+    } finally {
+        if (deleteOverlay) deleteOverlay.classList.remove('active');
+    }
+}
+
+updateSelectionModeUI();
 
 // 인증 상태 감지 및 UI 전환
 onAuthStateChanged(auth, (user) => {
@@ -79,6 +177,10 @@ onAuthStateChanged(auth, (user) => {
         loginScreen.style.display = 'flex';
         appContent.style.display = 'none';
         document.getElementById('cardContainer').innerHTML = '';
+        setSelectionMode(false);
+        pendingDropPayload = null;
+        dragDepth = 0;
+        setDragDropHintVisible(false);
     }
 });
 
@@ -165,11 +267,25 @@ async function loadUserData(uid) {
         const q = query(collection(db, "cards"), where("uid", "==", uid));
         const querySnapshot = await getDocs(q);
         const cardsToRender = [];
+        const renderableIdSet = new Set();
         const now = new Date().getTime();
 
         for (const docSnap of querySnapshot.docs) {
             const cardData = docSnap.data();
             const docId = docSnap.id;
+            const hasTag = !!(cardData.tagColor && TAG_META[cardData.tagColor]);
+
+            if (hasTag) {
+                cardData.expirationDays = 'permanent';
+                cardData.originalDuration = 'permanent';
+                if (docSnap.data().expirationDays !== 'permanent' || docSnap.data().originalDuration !== 'permanent') {
+                    await updateDoc(doc(db, 'cards', docId), { expirationDays: 'permanent', originalDuration: 'permanent' });
+                }
+            } else if (cardData.expirationDays === 'permanent') {
+                cardData.expirationDays = 3;
+                cardData.originalDuration = 3;
+                await updateDoc(doc(db, 'cards', docId), { expirationDays: 3, originalDuration: 3 });
+            }
 
             // ★★★ [3차 방어] 업로드/삭제 중단된 찌꺼기 파일 청소 ★★★
             if (cardData.status === 'uploading' || cardData.status === 'deleting') {
@@ -200,8 +316,13 @@ async function loadUserData(uid) {
                 if (expiredNames.length < 2) expiredNames.push(cardData.name || '이름 없음');
             } else {
                 cardsToRender.push({ id: docId, ...cardData });
+                renderableIdSet.add(docId);
             }
         }
+
+        selectedCardIds.forEach((id) => {
+            if (!renderableIdSet.has(id)) selectedCardIds.delete(id);
+        });
 
         cardsToRender.sort((a, b) => a.uploadTime - b.uploadTime);
         const ghostCleanupPromises = [];
@@ -214,6 +335,8 @@ async function loadUserData(uid) {
             ghostCleanupPromises.push(performGhostDataCleanup(cardData, cardData.id));
         });
         updateQuotaUI();
+        updateSelectionModeUI();
+        syncCardSelectionStyles();
 
         // 1. 기간 만료 알림
         if (expiredCount > 0) {
@@ -243,22 +366,102 @@ async function loadUserData(uid) {
 // UI 이벤트 리스너들
 loginBtn.addEventListener('click', () => signInWithPopup(auth, provider).catch(error => alert("로그인에 실패했습니다.")));
 logoutBtn.addEventListener('click', () => signOut(auth));
+if (toggleSelectModeBtn) {
+    toggleSelectModeBtn.addEventListener('click', () => {
+        setSelectionMode(!isSelectionMode);
+    });
+}
+if (cancelSelectionBtn) cancelSelectionBtn.addEventListener('click', () => setSelectionMode(false));
+if (deleteSelectedBtn) deleteSelectedBtn.addEventListener('click', () => deleteSelectedCards());
+
+function setTagSidebarOpen(isOpen) {
+    if (!tagSidebar || !sidebarOverlay) return;
+    tagSidebar.classList.toggle('open', isOpen);
+    sidebarOverlay.classList.toggle('active', isOpen);
+}
+
+function closeAllTagPickers() {
+    document.querySelectorAll('.tag-picker.open').forEach((picker) => picker.classList.remove('open'));
+}
+
 profileBtn.addEventListener('click', (e) => { e.stopPropagation(); profilePopup.style.display = profilePopup.style.display === 'none' ? 'flex' : 'none'; });
+menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const shouldOpen = !tagSidebar.classList.contains('open');
+    setTagSidebarOpen(shouldOpen);
+});
+if (sidebarOverlay) sidebarOverlay.addEventListener('click', () => setTagSidebarOpen(false));
 mainAddBtn.addEventListener('click', (e) => { e.stopPropagation(); addMenuPopup.style.display = addMenuPopup.style.display === 'none' ? 'flex' : 'none'; });
 document.addEventListener('click', (e) => {
     if (profilePopup && !profilePopup.contains(e.target) && !profileBtn.contains(e.target)) profilePopup.style.display = 'none';
     if (addMenuPopup && !addMenuPopup.contains(e.target) && !mainAddBtn.contains(e.target)) addMenuPopup.style.display = 'none';
+    if (tagSidebar && !tagSidebar.contains(e.target) && !menuBtn.contains(e.target)) setTagSidebarOpen(false);
+    closeAllTagPickers();
 });
 
 menuAddMemo.addEventListener('click', () => { addMenuPopup.style.display = 'none'; memoInput.value = ''; memoModal.style.display = 'flex'; });
 menuAddLink.addEventListener('click', () => { addMenuPopup.style.display = 'none'; linkInput.value = ''; linkModal.style.display = 'flex'; });
 menuAddPhoto.addEventListener('click', () => { addMenuPopup.style.display = 'none'; photoResizeModal.style.display = 'flex'; });
 resizeOption.addEventListener('change', function () { customWidthInput.style.display = this.value === 'custom' ? 'inline-block' : 'none'; });
-cancelPhotoBtn.addEventListener('click', () => photoResizeModal.style.display = 'none');
-confirmPhotoBtn.addEventListener('click', () => { photoResizeModal.style.display = 'none'; photoInput.click(); });
+cancelPhotoBtn.addEventListener('click', () => {
+    photoResizeModal.style.display = 'none';
+    pendingDropPayload = null;
+});
+confirmPhotoBtn.addEventListener('click', async () => {
+    photoResizeModal.style.display = 'none';
+    if (pendingDropPayload) {
+        const payload = pendingDropPayload;
+        pendingDropPayload = null;
+        await runDroppedUpload(payload);
+        return;
+    }
+    photoInput.click();
+});
 menuAddFile.addEventListener('click', () => { addMenuPopup.style.display = 'none'; generalFileInput.click(); });
 cancelMemoBtn.addEventListener('click', () => memoModal.style.display = 'none');
 cancelLinkBtn.addEventListener('click', () => linkModal.style.display = 'none');
+
+window.addEventListener('dragenter', (event) => {
+    if (!eventHasFiles(event)) return;
+    event.preventDefault();
+    if (!auth.currentUser) return;
+    dragDepth += 1;
+    setDragDropHintVisible(true);
+});
+
+window.addEventListener('dragover', (event) => {
+    if (!eventHasFiles(event)) return;
+    event.preventDefault();
+    if (!auth.currentUser) return;
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    setDragDropHintVisible(true);
+});
+
+window.addEventListener('dragleave', (event) => {
+    if (!auth.currentUser) return;
+    event.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) setDragDropHintVisible(false);
+});
+
+window.addEventListener('drop', async (event) => {
+    if (!eventHasFiles(event)) return;
+    event.preventDefault();
+    if (!auth.currentUser) return;
+    dragDepth = 0;
+    setDragDropHintVisible(false);
+
+    const droppedFiles = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+    if (droppedFiles.length === 0) return;
+
+    const { imageFiles, generalFiles } = splitDroppedFiles(droppedFiles);
+    if (imageFiles.length > 0) {
+        pendingDropPayload = { imageFiles, generalFiles };
+        photoResizeModal.style.display = 'flex';
+        return;
+    }
+    await runDroppedUpload({ imageFiles: [], generalFiles });
+});
 
 saveMemoBtn.addEventListener('click', async () => {
     const title = memoTitleInput.value.trim();
@@ -266,7 +469,7 @@ saveMemoBtn.addEventListener('click', async () => {
     if (!text || !auth.currentUser) return;
     saveMemoBtn.disabled = true;
 
-    const cardData = { uid: auth.currentUser.uid, type: 'text', name: title || '제목없음', content: text, expirationDays: 'permanent', uploadTime: new Date().getTime(), status: 'complete' };
+    const cardData = { uid: auth.currentUser.uid, type: 'text', name: title || '제목없음', content: text, expirationDays: 3, originalDuration: 3, uploadTime: new Date().getTime(), status: 'complete' };
     try {
         const docRef = await addDoc(collection(db, "cards"), cardData);
         createCard(cardData, docRef.id);
@@ -307,7 +510,7 @@ saveLinkBtn.addEventListener('click', async () => {
         console.warn("링크 타이틀 가져오기 실패:", e);
     }
 
-    const cardData = { uid: auth.currentUser.uid, type: 'text', content: link, name: fetchedTitle, expirationDays: 'permanent', uploadTime: new Date().getTime(), status: 'complete' };
+    const cardData = { uid: auth.currentUser.uid, type: 'text', content: link, name: fetchedTitle, expirationDays: 3, originalDuration: 3, uploadTime: new Date().getTime(), status: 'complete' };
     try {
         const docRef = await addDoc(collection(db, "cards"), cardData);
         createCard(cardData, docRef.id);
@@ -322,7 +525,78 @@ saveLinkBtn.addEventListener('click', async () => {
 
 
 let totalUsedSpace = 0;
-const MAX_SPACE = 100 * 1024 * 1024;
+
+function formatTimestampForFilename(timestamp) {
+    const date = Number.isFinite(timestamp) ? new Date(timestamp) : new Date();
+    const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${safeDate.getFullYear()}${pad(safeDate.getMonth() + 1)}${pad(safeDate.getDate())}_${pad(safeDate.getHours())}${pad(safeDate.getMinutes())}${pad(safeDate.getSeconds())}`;
+}
+
+function getFileExtension(file) {
+    if (file && typeof file.name === 'string') {
+        const dotIdx = file.name.lastIndexOf('.');
+        if (dotIdx !== -1 && dotIdx < file.name.length - 1) return file.name.substring(dotIdx).toLowerCase();
+    }
+
+    const mime = (file && typeof file.type === 'string') ? file.type.toLowerCase() : '';
+    if (mime === 'image/jpeg' || mime === 'image/jpg') return '.jpg';
+    if (mime === 'image/png') return '.png';
+    if (mime === 'image/webp') return '.webp';
+    if (mime === 'image/gif') return '.gif';
+    if (mime === 'image/heic') return '.heic';
+    if (mime === 'image/heif') return '.heif';
+    if (mime === 'image/bmp') return '.bmp';
+    if (mime === 'image/svg+xml') return '.svg';
+    return '';
+}
+
+function buildPhotoUploadFilename(file, sourceTimestamp, wasResized) {
+    const ts = Number.isFinite(sourceTimestamp) ? sourceTimestamp : (file && Number.isFinite(file.lastModified) ? file.lastModified : Date.now());
+    const datePart = formatTimestampForFilename(ts);
+    const ext = getFileExtension(file);
+    return `${wasResized ? 'resize_' : ''}${datePart}${ext}`;
+}
+
+function setDragDropHintVisible(visible) {
+    if (!dragDropHint) return;
+    dragDropHint.classList.toggle('active', visible);
+}
+
+function eventHasFiles(event) {
+    const types = event.dataTransfer && event.dataTransfer.types ? Array.from(event.dataTransfer.types) : [];
+    return types.includes('Files');
+}
+
+function isLikelyImageFile(file) {
+    if (!file) return false;
+    if (typeof file.type === 'string' && file.type.startsWith('image/')) return true;
+    const name = typeof file.name === 'string' ? file.name.toLowerCase() : '';
+    return /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif|avif)$/i.test(name);
+}
+
+function splitDroppedFiles(files) {
+    const imageFiles = [];
+    const generalFiles = [];
+    files.forEach((file) => {
+        if (isLikelyImageFile(file)) imageFiles.push(file);
+        else generalFiles.push(file);
+    });
+    return { imageFiles, generalFiles };
+}
+
+async function runDroppedUpload(payload) {
+    if (!payload || !auth.currentUser) return;
+    const imageFiles = payload.imageFiles || [];
+    const generalFiles = payload.generalFiles || [];
+
+    if (imageFiles.length > 0) {
+        await handleFilesUpload(imageFiles, 'image');
+    }
+    if (generalFiles.length > 0) {
+        await handleFilesUpload(generalFiles, 'file');
+    }
+}
 
 // ★★★ 업로드 핵심 로직 (빈 카드 선발행 & 올바른 폴더/이름 적용) ★★★
 async function handleFilesUpload(files, type) {
@@ -330,6 +604,7 @@ async function handleFilesUpload(files, type) {
 
     let fileArray = Array.from(files);
     let isImageGroup = type === 'image';
+    const imageMetaList = [];
 
     const overlay = document.getElementById('uploadOverlay');
     const overlayFilename = document.getElementById('uploadFilename');
@@ -341,24 +616,22 @@ async function handleFilesUpload(files, type) {
 
     if (isImageGroup) {
         for (let i = 0; i < fileArray.length; i++) {
-            fileArray[i] = await resizeImage(fileArray[i]);
+            const resizeResult = await resizeImage(fileArray[i]);
+            fileArray[i] = resizeResult.file;
+            imageMetaList[i] = {
+                wasResized: resizeResult.wasResized,
+                sourceTimestamp: resizeResult.sourceTimestamp
+            };
         }
     }
 
     let totalNewSize = 0;
     for (let file of fileArray) totalNewSize += file.size;
 
-    if (totalUsedSpace + totalNewSize > MAX_SPACE) {
-        overlay.classList.remove('active');
-        alert(`전체 할당 용량(100MB)을 초과할 수 없습니다. 추가하려는 용량: ${(totalNewSize / (1024 * 1024)).toFixed(2)}MB`); return;
-    }
-
     const uploadTimestamp = new Date().getTime();
     const uid = auth.currentUser.uid;
 
-    const sizeInMB = totalNewSize / (1024 * 1024);
-    let expirationDays = 30;
-    if (sizeInMB >= 50) expirationDays = 3; else if (sizeInMB >= 10) expirationDays = 7;
+    const expirationDays = 3;
 
     let docRef;
     try {
@@ -405,6 +678,10 @@ async function handleFilesUpload(files, type) {
     for (let i = 0; i < fileArray.length; i++) {
         let file = fileArray[i];
         let finalFileName = file.name;
+        if (isImageGroup) {
+            const imageMeta = imageMetaList[i] || {};
+            finalFileName = buildPhotoUploadFilename(file, imageMeta.sourceTimestamp, imageMeta.wasResized);
+        }
 
         originalNamesList.push(finalFileName);
 
@@ -518,8 +795,9 @@ async function handleFilesUpload(files, type) {
 function resizeImage(file) {
     return new Promise((resolve) => {
         const option = resizeOption.value;
+        const sourceTimestamp = Number.isFinite(file.lastModified) ? file.lastModified : Date.now();
         if (option === 'original') {
-            resolve(file);
+            resolve({ file, wasResized: false, sourceTimestamp });
             return;
         }
 
@@ -530,7 +808,7 @@ function resizeImage(file) {
         img.src = URL.createObjectURL(file);
         img.onload = () => {
             if (img.width <= targetWidth) {
-                resolve(file);
+                resolve({ file, wasResized: false, sourceTimestamp });
                 return;
             }
             const canvas = document.createElement('canvas');
@@ -541,10 +819,18 @@ function resizeImage(file) {
 
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             canvas.toBlob((blob) => {
-                resolve(new File([blob], `resize_${file.name}`, {
-                    type: file.type,
-                    lastModified: Date.now()
-                }));
+                if (!blob) {
+                    resolve({ file, wasResized: false, sourceTimestamp });
+                    return;
+                }
+                resolve({
+                    file: new File([blob], file.name, {
+                        type: file.type,
+                        lastModified: sourceTimestamp
+                    }),
+                    wasResized: true,
+                    sourceTimestamp
+                });
             }, file.type, 0.9);
         };
     });
@@ -553,7 +839,7 @@ function resizeImage(file) {
 photoInput.addEventListener('change', (e) => { handleFilesUpload(e.target.files, 'image'); photoInput.value = ''; });
 generalFileInput.addEventListener('change', (e) => { handleFilesUpload(e.target.files, 'file'); generalFileInput.value = ''; });
 
-function updateQuotaUI() { document.getElementById('quotaInfo').innerText = `현재 사용량: ${(totalUsedSpace / (1024 * 1024)).toFixed(2)} MB / 100 MB`; }
+function updateQuotaUI() { document.getElementById('quotaInfo').innerText = `현재 업로드 총 용량: ${(totalUsedSpace / (1024 * 1024)).toFixed(2)} MB`; }
 
 document.getElementById('resetAllBtn').addEventListener('click', async () => {
     if (!auth.currentUser) return;
@@ -576,6 +862,7 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
         document.getElementById('cardContainer').innerHTML = '';
         totalUsedSpace = 0;
         updateQuotaUI();
+        setSelectionMode(false);
 
         setTimeout(() => alert('모든 카드가 완전히 삭제/초기화 되었습니다.'), 100);
     } catch (error) {
@@ -586,7 +873,12 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
     }
 });
 
-let currentFilter = 'all';
+function updateTagFilterUI() {
+    document.querySelectorAll('.tag-filter-item').forEach((item) => {
+        item.classList.toggle('active', item.dataset.tagFilter === currentTagFilter);
+    });
+}
+
 document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', () => {
         document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
@@ -594,14 +886,35 @@ document.querySelectorAll('.filter-chip').forEach(chip => {
     });
 });
 
+document.querySelectorAll('.tag-filter-item').forEach((item) => {
+    item.addEventListener('click', () => {
+        const selectedFilter = item.dataset.tagFilter || 'none';
+        currentTagFilter = currentTagFilter === selectedFilter ? 'none' : selectedFilter;
+        updateTagFilterUI();
+        applyFilter(currentFilter);
+        setTagSidebarOpen(false);
+    });
+});
+updateTagFilterUI();
+
 function applyFilter(filter) {
+    if (filter) currentFilter = filter;
     const cards = document.querySelectorAll('.list-card');
     cards.forEach(card => {
-        if (filter === 'all') card.style.display = '';
-        else if (filter === 'text') card.style.display = card.dataset.cardType === 'memo' ? '' : 'none';
-        else if (filter === 'link') card.style.display = card.dataset.cardType === 'link' ? '' : 'none';
-        else if (filter === 'image') card.style.display = card.dataset.cardType === 'image' ? '' : 'none';
-        else if (filter === 'file') card.style.display = card.dataset.cardType === 'file' ? '' : 'none';
+        const typeMatched =
+            currentFilter === 'all' ||
+            (currentFilter === 'text' && card.dataset.cardType === 'memo') ||
+            (currentFilter === 'link' && card.dataset.cardType === 'link') ||
+            (currentFilter === 'image' && card.dataset.cardType === 'image') ||
+            (currentFilter === 'file' && card.dataset.cardType === 'file');
+
+        const tagColor = card.dataset.tagColor || '';
+        const tagMatched =
+            currentTagFilter === 'none' ? true :
+            currentTagFilter === 'all' ? !!tagColor :
+            tagColor === currentTagFilter;
+
+        card.style.display = typeMatched && tagMatched ? '' : 'none';
     });
 }
 
@@ -627,6 +940,11 @@ function createCard(data, docId = null) {
     const container = document.getElementById('cardContainer');
     const card = document.createElement('div'); card.className = 'list-card';
     if (docId) card.dataset.id = docId;
+    const tagKey = data.tagColor && TAG_META[data.tagColor] ? data.tagColor : '';
+    card.dataset.tagColor = tagKey;
+    const selectIndicator = document.createElement('span');
+    selectIndicator.className = 'card-select-indicator';
+    card.appendChild(selectIndicator);
 
     let badgeClass = 'badge-file'; let badgeText = 'FILE';
     if (data.type === 'text') {
@@ -651,17 +969,29 @@ function createCard(data, docId = null) {
     const dateStr = formatDate(data.uploadTime);
     const topRow = document.createElement('div'); topRow.className = 'card-top-row';
     const badgeEl = document.createElement('span'); badgeEl.className = `card-badge ${badgeClass}`; badgeEl.innerText = badgeText;
+    const tagPickerItems = Object.entries(TAG_META).map(([key, meta]) => `
+        <button class="tag-picker-item" data-tag-color="${key}">
+            <span class="tag-picker-dot" style="background:${meta.color};"></span>${meta.label}
+        </button>
+    `).join('');
 
     const moreBtnWrap = document.createElement('div'); moreBtnWrap.style.position = 'relative';
     moreBtnWrap.style.display = 'flex';
     moreBtnWrap.style.gap = '4px';
     moreBtnWrap.innerHTML = `
+        <button class="action-icon-btn tag-action-btn" style="color:#6f42c1; padding: 4px; border:none; background:transparent; cursor:pointer;" title="태그 지정">
+            <span class="material-symbols-outlined" style="font-size: 20px;">label</span>
+        </button>
         <button class="action-icon-btn edit-action-btn" style="color:#007bff; padding: 4px; border:none; background:transparent; cursor:pointer;" title="카드 제목 수정">
             <span class="material-symbols-outlined" style="font-size: 20px;">edit</span>
         </button>
         <button class="action-icon-btn delete-action-btn" style="color:#dc3545; padding: 4px; border:none; background:transparent; cursor:pointer;" title="카드 삭제">
             <span class="material-symbols-outlined" style="font-size: 20px;">delete</span>
         </button>
+        <div class="tag-picker">
+            ${tagPickerItems}
+            <button class="tag-picker-item" data-tag-color="">태그 해제</button>
+        </div>
     `;
 
     topRow.appendChild(badgeEl); topRow.appendChild(moreBtnWrap); card.appendChild(topRow);
@@ -682,7 +1012,12 @@ function createCard(data, docId = null) {
 
     const titleEl = bodyDiv.querySelector('.card-title'); titleEl.style.cursor = 'pointer';
     titleEl.title = data.type === 'text' && badgeText !== 'WEB' ? '클릭하여 메모 보기' : '클릭하여 열기 및 다운로드';
-    titleEl.addEventListener('click', () => {
+    titleEl.addEventListener('click', (e) => {
+        if (isSelectionMode && docId) {
+            e.stopPropagation();
+            toggleCardSelected(docId);
+            return;
+        }
         if (data.type === 'text') {
             if (badgeText === 'WEB') { let url = data.content; if (!url.match(/^https?:\/\//i)) url = 'http://' + url; window.open(url, '_blank'); }
             else { showMemoViewModal(data, docId); }
@@ -695,9 +1030,46 @@ function createCard(data, docId = null) {
 
     const deleteBtn = moreBtnWrap.querySelector('.delete-action-btn');
     const editBtn = moreBtnWrap.querySelector('.edit-action-btn');
+    const tagBtn = moreBtnWrap.querySelector('.tag-action-btn');
+    const tagPicker = moreBtnWrap.querySelector('.tag-picker');
+
+    tagBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isSelectionMode) return;
+        const willOpen = !tagPicker.classList.contains('open');
+        closeAllTagPickers();
+        if (willOpen) tagPicker.classList.add('open');
+    });
+
+    tagPicker.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (isSelectionMode) return;
+        const target = e.target.closest('.tag-picker-item');
+        if (!target || !docId) return;
+        const selectedTag = target.dataset.tagColor || null;
+        const nextTag = selectedTag && TAG_META[selectedTag] ? selectedTag : null;
+
+        try {
+            if (nextTag) {
+                await updateDoc(doc(db, 'cards', docId), {
+                    tagColor: nextTag,
+                    expirationDays: 'permanent',
+                    originalDuration: 'permanent'
+                });
+            } else {
+                await updateDoc(doc(db, 'cards', docId), { tagColor: null });
+            }
+            closeAllTagPickers();
+            if (auth.currentUser) await loadUserData(auth.currentUser.uid);
+        } catch (err) {
+            console.error('태그 저장 오류:', err);
+            alert('태그 저장에 실패했습니다.');
+        }
+    });
 
     editBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (isSelectionMode) return;
         const currentTitle = data.name || titleText || '';
         const newTitle = prompt('수정할 카드 제목을 입력하세요:', currentTitle);
         if (newTitle !== null && newTitle.trim() !== '' && newTitle.trim() !== currentTitle) {
@@ -714,6 +1086,7 @@ function createCard(data, docId = null) {
 
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (isSelectionMode) return;
         if (!confirm('정말 이 카드를 삭제하시겠습니까?')) return;
 
         const deleteOverlay = document.getElementById('deleteOverlay');
@@ -729,6 +1102,8 @@ function createCard(data, docId = null) {
                 totalUsedSpace -= (parseFloat(data.size) * 1024 * 1024);
                 if (totalUsedSpace < 0) totalUsedSpace = 0; updateQuotaUI();
             }
+            if (docId && selectedCardIds.has(docId)) selectedCardIds.delete(docId);
+            updateSelectionModeUI();
             card.remove();
 
             setTimeout(() => alert(`데이터가 완전히 삭제되었습니다.`), 100);
@@ -744,8 +1119,21 @@ function createCard(data, docId = null) {
     const statusDiv = statusContainer.querySelector('.card-status');
     const extendBtn = document.createElement('button'); extendBtn.className = 'extend-btn'; extendBtn.innerText = '연장'; extendBtn.style.display = 'none';
     statusContainer.appendChild(extendBtn);
+    if (tagKey) {
+        const tagDot = document.createElement('span');
+        tagDot.className = 'card-tag-dot';
+        tagDot.style.backgroundColor = TAG_META[tagKey].color;
+        card.appendChild(tagDot);
+    }
+
+    card.addEventListener('click', () => {
+        if (!isSelectionMode || !docId) return;
+        toggleCardSelected(docId);
+    });
+
     container.insertBefore(card, container.firstChild);
-    if (typeof currentFilter !== 'undefined' && currentFilter !== 'all') applyFilter(currentFilter);
+    if ((typeof currentFilter !== 'undefined' && currentFilter !== 'all') || currentTagFilter !== 'none') applyFilter(currentFilter);
+    syncCardSelectionStyles();
 
     setTimeout(() => {
         const descEl = bodyDiv.querySelector('.card-desc');
@@ -767,7 +1155,7 @@ function createCard(data, docId = null) {
             const hoursLeft = timeLeft / (1000 * 60 * 60);
             statusDiv.innerText = hoursLeft < 24 ? `${Math.floor(hoursLeft)}시간 후 만료` : `${Math.floor(hoursLeft / 24) + 1}일 후 만료`;
 
-            if (hoursLeft <= 48) { extendBtn.style.display = 'inline-block'; statusDiv.style.color = '#e74c3c'; statusDiv.style.fontWeight = 'bold'; }
+            if (hoursLeft <= 24) { extendBtn.style.display = 'inline-block'; statusDiv.style.color = '#e74c3c'; statusDiv.style.fontWeight = 'bold'; }
             else { extendBtn.style.display = 'none'; statusDiv.style.color = '#555'; statusDiv.style.fontWeight = 'normal'; }
         }, 1000);
 

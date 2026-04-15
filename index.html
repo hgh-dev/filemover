@@ -239,6 +239,105 @@
             background-color: #e5e7ea;
         }
 
+        .sidebar-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.25);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+            z-index: 900;
+        }
+
+        .sidebar-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .tag-sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 220px;
+            height: 100dvh;
+            box-sizing: border-box;
+            padding: 14px 12px;
+            background: #f4f4f4;
+            transform: translateX(-100%);
+            transition: transform 0.2s ease;
+            z-index: 910;
+            box-shadow: 4px 0 20px rgba(0, 0, 0, 0.18);
+        }
+
+        .tag-sidebar.open {
+            transform: translateX(0);
+        }
+
+        .tag-sidebar-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #4f4f4f;
+            margin: 8px 8px 10px;
+        }
+
+        .tag-filter-item {
+            width: 100%;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            padding: 9px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #333;
+            font-size: 0.93rem;
+            text-align: left;
+        }
+
+        .tag-filter-item:hover {
+            background: #e7e7e7;
+        }
+
+        .tag-filter-item.active {
+            background: #dfdfdf;
+            font-weight: 700;
+        }
+
+        .tag-filter-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .tag-filter-all-icon {
+            position: relative;
+            width: 16px;
+            height: 14px;
+            flex-shrink: 0;
+        }
+
+        .tag-filter-all-icon::before,
+        .tag-filter-all-icon::after {
+            content: "";
+            position: absolute;
+            border: 2px solid #333;
+            border-radius: 50%;
+            width: 10px;
+            height: 10px;
+            top: 0;
+            background: #f4f4f4;
+        }
+
+        .tag-filter-all-icon::before {
+            left: 0;
+        }
+
+        .tag-filter-all-icon::after {
+            left: 6px;
+        }
+
         /* 하단 중앙 고정 FAB(+ 버튼) */
         .add-action-btn {
             position: fixed;
@@ -377,6 +476,99 @@
             padding: 16px 16px 90px;
         }
 
+        .list-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .list-toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .select-mode-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 9px;
+            border-radius: 6px;
+            border: 1px solid #d9d9d9;
+            background: #fff;
+            color: #666;
+            font-size: 0.74rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .select-mode-btn.active {
+            background: #eef5ff;
+            color: #2f6fd8;
+            border-color: #8ab3f3;
+            font-weight: 700;
+        }
+
+        .selection-count-label {
+            font-size: 0.72rem;
+            color: #666;
+        }
+
+        .selection-action-bar {
+            position: fixed;
+            left: 50%;
+            bottom: 18px;
+            transform: translateX(-50%);
+            width: min(92vw, 760px);
+            background: #fff;
+            border: 1px solid #e5e5e5;
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.16);
+            padding: 10px 12px;
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 950;
+            box-sizing: border-box;
+        }
+
+        .selection-action-bar.active {
+            display: flex;
+        }
+
+        .selection-summary {
+            font-size: 0.83rem;
+            color: #444;
+            font-weight: 600;
+        }
+
+        .selection-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .selection-action-btn {
+            border: none;
+            border-radius: 7px;
+            padding: 7px 11px;
+            font-size: 0.78rem;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .selection-cancel-btn {
+            background: #eceff2;
+            color: #4d4d4d;
+        }
+
+        .selection-delete-btn {
+            background: #d93f3f;
+            color: #fff;
+        }
+
         .upload-section {
             background: #fff;
             padding: 20px;
@@ -409,6 +601,127 @@
             /* 세로 레이아웃 */
             overflow: visible;
             position: relative;
+        }
+
+        .card-select-indicator {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 2px solid #b6bcc5;
+            background: #fff;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 4;
+            box-sizing: border-box;
+        }
+
+        .list-card.selection-mode {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .list-card.selection-mode .card-select-indicator {
+            display: flex;
+        }
+
+        .list-card.selection-mode .card-top-row,
+        .list-card.selection-mode .card-body {
+            filter: grayscale(0.34) blur(0.85px);
+            opacity: 0.76;
+        }
+
+        .list-card.selection-mode .action-icon-btn,
+        .list-card.selection-mode .tag-picker {
+            display: none !important;
+        }
+
+        .list-card.selection-mode .toggle-desc-btn,
+        .list-card.selection-mode .extend-btn {
+            display: none !important;
+        }
+
+        .list-card.selection-mode .card-title {
+            cursor: inherit !important;
+        }
+
+        .list-card.selection-selected {
+            border: 1px solid #6ea0ec;
+            box-shadow: 0 0 0 2px rgba(110, 160, 236, 0.24);
+        }
+
+        .list-card.selection-selected .card-top-row,
+        .list-card.selection-selected .card-body {
+            filter: none;
+            opacity: 1;
+        }
+
+        .list-card.selection-selected .card-select-indicator {
+            border-color: #2f6fd8;
+            background: #2f6fd8;
+            color: #fff;
+        }
+
+        .card-tag-dot {
+            position: absolute;
+            left: 12px;
+            bottom: 10px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 0, 0, 0.16);
+            z-index: 2;
+        }
+
+        .tag-picker {
+            position: absolute;
+            right: 0;
+            top: 32px;
+            z-index: 40;
+            min-width: 140px;
+            background: #fff;
+            border: 1px solid #e7e7e7;
+            border-radius: 10px;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.15);
+            padding: 6px;
+            display: none;
+        }
+
+        .tag-picker.open {
+            display: block;
+        }
+
+        .tag-picker-item {
+            width: 100%;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.83rem;
+            color: #333;
+            cursor: pointer;
+            text-align: left;
+            padding: 7px 8px;
+        }
+
+        .tag-picker-item:hover {
+            background: #f2f4f7;
+        }
+
+        .tag-picker-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            border: 1px solid rgba(0, 0, 0, 0.15);
         }
 
         /* 최상단 행: 뱃지 + ⋮ 버튼 */
@@ -701,6 +1014,33 @@
             margin-top: 6px;
         }
 
+        #dragDropHint {
+            position: fixed;
+            inset: 0;
+            z-index: 9400;
+            background: rgba(19, 24, 30, 0.45);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+
+        #dragDropHint.active {
+            display: flex;
+        }
+
+        .drag-drop-hint-box {
+            border: 2px dashed rgba(255, 255, 255, 0.78);
+            color: #fff;
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 14px;
+            padding: 24px 28px;
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: 0.1px;
+            backdrop-filter: blur(1.5px);
+        }
+
         /* 다중 다운로드 목록 스타일 */
         .multi-download-list {
             list-style: none;
@@ -812,6 +1152,11 @@
         <div style="margin-top: 15px; font-size: 14px; letter-spacing: 0.5px;">삭제 중입니다. 앱을 종료하지 마세요.</div>
     </div>
 
+    <!-- 드래그 앤 드롭 업로드 힌트 -->
+    <div id="dragDropHint">
+        <div class="drag-drop-hint-box">파일을 놓아 업로드</div>
+    </div>
+
     <div class="container">
         <div id="loginScreen">
             <h1>File Mover</h1>
@@ -848,6 +1193,47 @@
                 </div>
             </div>
 
+            <div id="sidebarOverlay" class="sidebar-overlay"></div>
+            <aside id="tagSidebar" class="tag-sidebar">
+                <div class="tag-sidebar-title">태그</div>
+                <button class="tag-filter-item" data-tag-filter="red">
+                    <span class="tag-filter-dot" style="background:#ff3b30;"></span>
+                    빨간색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="orange">
+                    <span class="tag-filter-dot" style="background:#ff9500;"></span>
+                    주황색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="yellow">
+                    <span class="tag-filter-dot" style="background:#ffcc00;"></span>
+                    노란색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="green">
+                    <span class="tag-filter-dot" style="background:#34c759;"></span>
+                    초록색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="blue">
+                    <span class="tag-filter-dot" style="background:#007aff;"></span>
+                    파란색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="navy">
+                    <span class="tag-filter-dot" style="background:#3f51b5;"></span>
+                    남색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="purple">
+                    <span class="tag-filter-dot" style="background:#af52de;"></span>
+                    보라색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="gray">
+                    <span class="tag-filter-dot" style="background:#8e8e93;"></span>
+                    회색
+                </button>
+                <button class="tag-filter-item" data-tag-filter="all" style="margin-top:4px;">
+                    <span class="tag-filter-all-icon"></span>
+                    모든 태그...
+                </button>
+            </aside>
+
             <!-- 필터 바 영역 -->
             <div style="position: relative;">
                 <div class="filter-bar">
@@ -878,9 +1264,9 @@
             </div>
 
             <div class="main-content">
-                <div
-                    style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 15px;">
-                    <div id="quotaInfo" style="font-size: 0.7em; color: #666;">현재 사용량: 0 MB / 100 MB</div>
+                <div class="list-toolbar">
+                    <div class="list-toolbar-left">
+                        <div id="quotaInfo" style="font-size: 0.7em; color: #666;">현재 업로드 총 용량: 0.00 MB</div>
                     <button id="resetAllBtn" title="모든 카드 초기화" style="
                         display: flex; align-items: center; gap: 3px;
                         background: none; border: 1px solid #e0e0e0;
@@ -892,10 +1278,26 @@
                         <span class="material-symbols-outlined" style="font-size: 14px;">delete_sweep</span>
                         초기화
                     </button>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px;">
+                        <button id="toggleSelectModeBtn" class="select-mode-btn" title="카드 선택 모드">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">checklist</span>
+                            선택
+                        </button>
+                        <span id="selectionCountLabel" class="selection-count-label"></span>
+                    </div>
                 </div>
                 <div id="cardContainer" class="card-container">
                 </div>
             </div> <!-- end of main-content -->
+
+            <div id="selectionActionBar" class="selection-action-bar">
+                <div id="selectionSummary" class="selection-summary">0개 선택됨</div>
+                <div class="selection-actions">
+                    <button id="cancelSelectionBtn" class="selection-action-btn selection-cancel-btn">취소</button>
+                    <button id="deleteSelectedBtn" class="selection-action-btn selection-delete-btn">선택 삭제</button>
+                </div>
+            </div>
 
             <!-- 숨겨진 파일 및 사진 업로드 인풋 -->
             <input type="file" id="photoInput" accept="image/*" multiple style="display:none;">
