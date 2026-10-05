@@ -1162,6 +1162,11 @@
             <h1>File Mover</h1>
             <p>서비스를 이용하려면 로그인이 필요합니다.</p>
             <button id="loginBtn">Google 계정으로 로그인</button>
+            <button id="loginSettingsBtn" style="margin-top: 18px; background: #fff; border: 1px solid #ddd; color: #444; font-size: 0.88rem; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); transition: all 0.2s;">
+                <span class="material-symbols-outlined" style="font-size: 18px; color: #666;">settings</span>
+                Cloudinary 설정
+            </button>
+            <div style="margin-top: 24px; font-size: 0.75rem; color: #aaa;">v1.1.2</div>
         </div>
 
         <div id="appContent" style="display: none;">
@@ -1182,6 +1187,9 @@
                             <div class="popup-email" id="popupEmail">user@example.com</div>
                         </div>
                         <div class="popup-actions">
+                            <button class="popup-action-btn" id="openSettingsBtn">
+                                <span class="material-symbols-outlined icon">settings</span> 설정
+                            </button>
                             <button class="popup-action-btn" id="addAccountBtn">
                                 <span class="material-symbols-outlined icon">person_add</span> 다른 계정 추가
                             </button>
@@ -1414,6 +1422,87 @@
 
         </div> <!-- end of appContent -->
     </div> <!-- end of container -->
+
+    <!-- 설정 모달 (로그인 화면에서도 접근할 수 있도록 container 바깥에 배치) -->
+    <div class="modal-overlay" id="settingsModal" style="display: none; z-index: 9999; background: rgba(0,0,0,0.6);">
+        <div class="modal-content" style="max-height: 90vh; display: flex; flex-direction: column; width: 92%; max-width: 480px; overflow-y: auto; padding: 22px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 style="margin: 0; color: #222; font-size: 1.15rem; display: flex; align-items: center; gap: 8px;">
+                    <span class="material-symbols-outlined" style="color: #007bff;">settings</span>
+                    Cloudinary 연동 설정
+                </h3>
+                <button id="closeSettingsBtn" class="icon-button" style="color: #666; flex-shrink: 0;">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <div style="margin-bottom: 14px; background: #eef5ff; border: 1px solid #d0e2ff; border-radius: 8px; padding: 10px 12px; font-size: 0.8rem; color: #23527c; line-height: 1.45;">
+                <div style="font-weight: bold; margin-bottom: 3px; display: flex; align-items: center; gap: 4px;">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">info</span>
+                    키 확인 방법 (<a href="https://console.cloudinary.com/" target="_blank" rel="noopener noreferrer" style="color: #007bff; text-decoration: underline; font-weight: bold;">Cloudinary 콘솔 열기 ↗</a>)
+                </div>
+                아래 각 항목의 안내 위치를 참고하여 Cloudinary 콘솔의 값을 복사해 입력하세요. 로그인하지 않아도 현재 브라우저에 저장되며, Google 로그인 시 계정에 자동 백업됩니다.
+            </div>
+
+            <!-- 1. Cloud Name -->
+            <div class="input-group" style="margin-bottom: 14px;">
+                <label for="settingCloudName" style="display: block; font-size: 0.85rem; font-weight: bold; margin-bottom: 4px; color: #333;">
+                    Cloud Name <span style="color: #dc3545;">*</span>
+                </label>
+                <input type="text" id="settingCloudName" placeholder="예: my-cloud-name" style="width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 0.9rem; margin-bottom: 4px;">
+                <div style="font-size: 0.73rem; color: #555; background: #f8f9fa; border-left: 3px solid #007bff; padding: 6px 8px; border-radius: 3px; line-height: 1.35;">
+                    📍 <strong>위치:</strong> Cloudinary 로그인 후 <strong>대시보드(Dashboard) 메인 화면</strong>의 <code>Product Environment Credentials</code> 상단 <strong>Cloud Name</strong>
+                </div>
+            </div>
+
+            <!-- 2. Upload Preset -->
+            <div class="input-group" style="margin-bottom: 14px;">
+                <label for="settingUploadPreset" style="display: block; font-size: 0.85rem; font-weight: bold; margin-bottom: 4px; color: #333;">
+                    Upload Preset (Unsigned) <span style="color: #dc3545;">*</span>
+                </label>
+                <input type="text" id="settingUploadPreset" placeholder="예: my_preset_name" style="width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 0.9rem; margin-bottom: 4px;">
+                <div style="font-size: 0.73rem; color: #555; background: #f8f9fa; border-left: 3px solid #007bff; padding: 6px 8px; border-radius: 3px; line-height: 1.35;">
+                    📍 <strong>위치:</strong> 좌측 하단 <strong>⚙️ Settings</strong> ➜ <strong>Upload presets</strong> (또는 Upload 탭) ➜ <strong>Add upload preset</strong> 버튼 클릭 ➜ <u>Signing Mode를 <strong>Unsigned</strong>로 선택</u> 후 저장한 <strong>Name</strong> 입력
+                </div>
+            </div>
+
+            <!-- 3. API Key -->
+            <div class="input-group" style="margin-bottom: 14px;">
+                <label for="settingApiKey" style="display: block; font-size: 0.85rem; font-weight: bold; margin-bottom: 4px; color: #333;">
+                    API Key
+                </label>
+                <input type="text" id="settingApiKey" placeholder="예: 822956219941674" style="width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 0.9rem; margin-bottom: 4px;">
+                <div style="font-size: 0.73rem; color: #555; background: #f8f9fa; border-left: 3px solid #6c757d; padding: 6px 8px; border-radius: 3px; line-height: 1.35;">
+                    📍 <strong>위치:</strong> 대시보드 메인 <code>Product Environment Credentials</code> ➜ <strong>API Key</strong> (또는 ⚙️ Settings ➜ API Keys)
+                </div>
+            </div>
+
+            <!-- 4. API Secret -->
+            <div class="input-group" style="margin-bottom: 16px;">
+                <label for="settingApiSecret" style="display: block; font-size: 0.85rem; font-weight: bold; margin-bottom: 4px; color: #333;">
+                    API Secret
+                </label>
+                <div style="position: relative; margin-bottom: 4px;">
+                    <input type="password" id="settingApiSecret" placeholder="Cloudinary API Secret" style="width: 100%; padding: 8px 36px 8px 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 0.9rem;">
+                    <button type="button" id="toggleSecretVisibilityBtn" style="position: absolute; right: 8px; top: 18px; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #777; padding: 2px; display: flex; align-items: center;">
+                        <span class="material-symbols-outlined" style="font-size: 18px;" id="secretVisibilityIcon">visibility</span>
+                    </button>
+                </div>
+                <div style="font-size: 0.73rem; color: #555; background: #f8f9fa; border-left: 3px solid #6c757d; padding: 6px 8px; border-radius: 3px; line-height: 1.35;">
+                    📍 <strong>위치:</strong> 대시보드 메인 <strong>API Key 바로 아래</strong>의 <strong>API Secret</strong> (눈 아이콘 클릭 후 복사)<br>
+                    ※ 카드/파일 삭제 시 Cloudinary 저장소에서도 파일을 즉시 완전히 파기하기 위해 필요합니다.
+                </div>
+            </div>
+
+            <div class="modal-actions" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                <span style="font-size: 0.75rem; color: #999;">v1.1.2</span>
+                <div style="display: flex; gap: 8px;">
+                    <button class="cancel-btn" id="cancelSettingsBtn" style="padding: 8px 16px; border-radius: 6px; border: 1px solid #ddd; background: #f8f9fa; color: #333; cursor: pointer; font-size: 0.9rem;">취소</button>
+                    <button class="save-btn" id="saveSettingsBtn" style="padding: 8px 18px; border-radius: 6px; border: none; background: #007bff; color: white; cursor: pointer; font-size: 0.9rem; font-weight: bold;">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script type="module" src="script.js"></script>
 </body>

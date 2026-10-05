@@ -3,13 +3,17 @@ import {
     auth, db, provider,
     signInWithPopup, onAuthStateChanged, signOut,
     collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc,
-    deleteCloudinaryFile
+    deleteCloudinaryFile, getCloudinaryConfig, saveCloudinaryConfig, syncCloudinaryConfigFromFirestore
 } from "./backend.js";
 
 // PWA: 서비스 워커 등록
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./service-worker.js')
+        navigator.serviceWorker.register('./service-worker.js', { updateViaCache: 'none' })
+            .then(registration => {
+                // 브라우저의 기본 검사 주기와 관계없이 페이지를 열 때마다 업데이트를 확인합니다.
+                registration.update().catch(() => {});
+            })
             .catch(err => console.log('Service Worker 등록 실패: ', err));
     });
 }
@@ -65,6 +69,20 @@ const multiDownloadModal = document.getElementById('multiDownloadModal');
 const closeMultiDownloadBtn = document.getElementById('closeMultiDownloadBtn');
 const multiDownloadList = document.getElementById('multiDownloadList');
 const multiDownloadTitle = document.getElementById('multiDownloadTitle');
+
+// 설정 모달 DOM 요소
+const openSettingsBtn = document.getElementById('openSettingsBtn');
+const loginSettingsBtn = document.getElementById('loginSettingsBtn');
+const settingsModal = document.getElementById('settingsModal');
+const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+const cancelSettingsBtn = document.getElementById('cancelSettingsBtn');
+const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+const settingCloudName = document.getElementById('settingCloudName');
+const settingUploadPreset = document.getElementById('settingUploadPreset');
+const settingApiKey = document.getElementById('settingApiKey');
+const settingApiSecret = document.getElementById('settingApiSecret');
+const toggleSecretVisibilityBtn = document.getElementById('toggleSecretVisibilityBtn');
+const secretVisibilityIcon = document.getElementById('secretVisibilityIcon');
 
 const TAG_META = {
     red: { label: '빨간색', color: '#ff3b30' },
@@ -173,6 +191,7 @@ onAuthStateChanged(auth, (user) => {
         popupEmail.innerText = user.email || '';
 
         loadUserData(user.uid);
+        syncCloudinaryConfigFromFirestore(user.uid);
     } else {
         loginScreen.style.display = 'flex';
         appContent.style.display = 'none';
@@ -421,6 +440,75 @@ menuAddFile.addEventListener('click', () => { addMenuPopup.style.display = 'none
 cancelMemoBtn.addEventListener('click', () => memoModal.style.display = 'none');
 cancelLinkBtn.addEventListener('click', () => linkModal.style.display = 'none');
 
+// 설정 모달 제어 함수
+function openSettingsModal() {
+    const config = getCloudinaryConfig();
+    if (settingCloudName) settingCloudName.value = config.cloudName || '';
+    if (settingUploadPreset) settingUploadPreset.value = config.uploadPreset || '';
+    if (settingApiKey) settingApiKey.value = config.apiKey || '';
+    if (settingApiSecret) {
+        settingApiSecret.value = config.apiSecret || '';
+        settingApiSecret.type = 'password';
+    }
+    if (secretVisibilityIcon) secretVisibilityIcon.innerText = 'visibility';
+    if (settingsModal) settingsModal.style.display = 'flex';
+}
+
+function closeSettingsModal() {
+    if (settingsModal) settingsModal.style.display = 'none';
+}
+
+if (openSettingsBtn) {
+    openSettingsBtn.addEventListener('click', () => {
+        if (profilePopup) profilePopup.style.display = 'none';
+        openSettingsModal();
+    });
+}
+if (loginSettingsBtn) {
+    loginSettingsBtn.addEventListener('click', openSettingsModal);
+}
+if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', closeSettingsModal);
+if (cancelSettingsBtn) cancelSettingsBtn.addEventListener('click', closeSettingsModal);
+
+if (toggleSecretVisibilityBtn && settingApiSecret && secretVisibilityIcon) {
+    toggleSecretVisibilityBtn.addEventListener('click', () => {
+        const isPassword = settingApiSecret.type === 'password';
+        settingApiSecret.type = isPassword ? 'text' : 'password';
+        secretVisibilityIcon.innerText = isPassword ? 'visibility_off' : 'visibility';
+    });
+}
+
+if (saveSettingsBtn) {
+    saveSettingsBtn.addEventListener('click', async () => {
+        const cloudName = (settingCloudName.value || '').trim();
+        const uploadPreset = (settingUploadPreset.value || '').trim();
+        const apiKey = (settingApiKey.value || '').trim();
+        const apiSecret = (settingApiSecret.value || '').trim();
+
+        if (!cloudName) {
+            alert('Cloud Name을 입력해주세요.');
+            settingCloudName.focus();
+            return;
+        }
+        if (!uploadPreset) {
+            alert('Upload Preset을 입력해주세요.');
+            settingUploadPreset.focus();
+            return;
+        }
+
+        saveSettingsBtn.disabled = true;
+        saveSettingsBtn.innerText = '저장 중...';
+
+        const uid = auth.currentUser ? auth.currentUser.uid : null;
+        await saveCloudinaryConfig({ cloudName, uploadPreset, apiKey, apiSecret }, uid);
+
+        alert('Cloudinary 설정이 저장되었습니다.');
+        saveSettingsBtn.disabled = false;
+        saveSettingsBtn.innerText = '저장';
+        closeSettingsModal();
+    });
+}
+
 window.addEventListener('dragenter', (event) => {
     if (!eventHasFiles(event)) return;
     event.preventDefault();
@@ -602,6 +690,13 @@ async function runDroppedUpload(payload) {
 async function handleFilesUpload(files, type) {
     if (!files || files.length === 0) return;
 
+    const cloudinaryConfig = getCloudinaryConfig();
+    if (!cloudinaryConfig.cloudName || !cloudinaryConfig.uploadPreset) {
+        alert('파일을 업로드하려면 Cloudinary 설정(Cloud Name, Upload Preset)이 필요합니다.\n설정 창에서 입력해주세요.');
+        openSettingsModal();
+        return;
+    }
+
     let fileArray = Array.from(files);
     let isImageGroup = type === 'image';
     const imageMetaList = [];
@@ -687,7 +782,7 @@ async function handleFilesUpload(files, type) {
 
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('upload_preset', 'filemover');
+        formData.append('upload_preset', cloudinaryConfig.uploadPreset);
 
         // ★★★ [폴더 지정 핵심 부분] ★★★
         // 1. 파일 이름에서 확장자를 뺀 순수 이름만 추출해 (예: image.png -> image)
@@ -695,10 +790,10 @@ async function handleFilesUpload(files, type) {
         // 2. public_id에서는 uid 경로를 삭제하고 순수 파일명+시간값만 남겨
         const newPublicId = `${nameBase}_${uploadTimestamp}_${i}`;
         formData.append('public_id', newPublicId);
-        // 3. ★ 핵심: folder 라는 라벨을 새로 만들어서 uid(사용자 고유번호) 폴더에 담으라고 명시해
-        formData.append('folder', uid);
+        // 3. ★ 핵심: folder를 'filemover' 고정 폴더로 지정
+        formData.append('folder', 'filemover');
 
-        const cloudName = 'dxcfrulyd';
+        const cloudName = cloudinaryConfig.cloudName;
         overlayFilename.innerText = finalFileName;
         overlayBar.style.width = '0%'; overlayPct.innerText = '0%';
         overlayCount.innerText = fileArray.length > 1 ? `파일 ${i + 1} / ${fileArray.length}` : '';
@@ -707,7 +802,7 @@ async function handleFilesUpload(files, type) {
         // 일반 파일(raw 타입)인 경우 Cloudinary가 원본 파일의 확장자를 public_id 끝에 강제로 붙이므로 그 형식을 똑같이 맞춰줌
         const dotIndex = finalFileName.lastIndexOf('.');
         const ext = dotIndex !== -1 ? finalFileName.substring(dotIndex) : '';
-        const expectedPublicId = isImageGroup ? `${uid}/${newPublicId}` : `${uid}/${newPublicId}${ext}`;
+        const expectedPublicId = isImageGroup ? `filemover/${newPublicId}` : `filemover/${newPublicId}${ext}`;
 
         publicIdsList.push(expectedPublicId);
         await updateDoc(doc(db, 'cards', docRef.id), { publicIds: publicIdsList });

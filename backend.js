@@ -1,7 +1,7 @@
 // Firebase SDK 모듈 임포트
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 // TODO: 본인의 Firebase 프로젝트 설정값으로 교체해야 합니다.
 const firebaseConfig = {
@@ -19,7 +19,90 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
-export { auth, db, provider, signInWithPopup, onAuthStateChanged, signOut, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc };
+export { auth, db, provider, signInWithPopup, onAuthStateChanged, signOut, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc, setDoc, getDoc };
+
+// Cloudinary 설정 관리 함수 (로컬스토리지 + Firestore 연동)
+export function getCloudinaryConfig() {
+    try {
+        const saved = localStorage.getItem('cloudinary_config');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            return {
+                cloudName: (parsed.cloudName || '').trim(),
+                uploadPreset: (parsed.uploadPreset || '').trim(),
+                apiKey: (parsed.apiKey || '').trim(),
+                apiSecret: (parsed.apiSecret || '').trim()
+            };
+        }
+    } catch (e) {
+        console.error('Cloudinary 설정 로드 실패:', e);
+    }
+    return {
+        cloudName: '',
+        uploadPreset: '',
+        apiKey: '',
+        apiSecret: ''
+    };
+}
+
+export async function saveCloudinaryConfig(config, uid = null) {
+    const cleanConfig = {
+        cloudName: (config.cloudName || '').trim(),
+        uploadPreset: (config.uploadPreset || '').trim(),
+        apiKey: (config.apiKey || '').trim(),
+        apiSecret: (config.apiSecret || '').trim()
+    };
+    try {
+        localStorage.setItem('cloudinary_config', JSON.stringify(cleanConfig));
+    } catch (e) {
+        console.error('Cloudinary 로컬 저장 실패:', e);
+    }
+
+    if (uid && db) {
+        try {
+            await setDoc(doc(db, 'user_settings', uid), { cloudinary: cleanConfig }, { merge: true });
+        } catch (e) {
+            console.warn('Firestore 설정 동기화 실패 (로컬 저장은 유지됨):', e);
+        }
+    }
+}
+
+export async function syncCloudinaryConfigFromFirestore(uid) {
+    if (!uid || !db) return getCloudinaryConfig();
+    try {
+        const docRef = doc(db, 'user_settings', uid);
+        const docSnap = await getDoc(docRef);
+        const localConfig = getCloudinaryConfig();
+        const hasLocalConfig = Boolean(localConfig.cloudName && localConfig.uploadPreset);
+
+        if (docSnap.exists() && docSnap.data().cloudinary) {
+            const remoteConfig = docSnap.data().cloudinary;
+            const hasRemoteConfig = Boolean(remoteConfig.cloudName && remoteConfig.uploadPreset);
+
+            if (hasRemoteConfig) {
+                const merged = {
+                    cloudName: (remoteConfig.cloudName || localConfig.cloudName || '').trim(),
+                    uploadPreset: (remoteConfig.uploadPreset || localConfig.uploadPreset || '').trim(),
+                    apiKey: (remoteConfig.apiKey || localConfig.apiKey || '').trim(),
+                    apiSecret: (remoteConfig.apiSecret || localConfig.apiSecret || '').trim()
+                };
+                localStorage.setItem('cloudinary_config', JSON.stringify(merged));
+                return merged;
+            } else if (hasLocalConfig) {
+                // 원격에 설정이 없고 로컬에 유효한 설정이 있는 경우 원격으로 업로드 동기화
+                await setDoc(docRef, { cloudinary: localConfig }, { merge: true });
+                return localConfig;
+            }
+        } else if (hasLocalConfig) {
+            // 원격 문서가 없고 로컬에 설정이 있는 경우 원격에 자동 저장
+            await setDoc(docRef, { cloudinary: localConfig }, { merge: true });
+            return localConfig;
+        }
+    } catch (e) {
+        console.warn('Firestore 설정 동기화 실패 (로컬 설정 사용):', e);
+    }
+    return getCloudinaryConfig();
+}
 
 export async function sha1(str) {
     const buffer = new TextEncoder("utf-8").encode(str);
@@ -28,9 +111,14 @@ export async function sha1(str) {
 }
 
 export async function deleteCloudinaryFile(publicId, resourceType = 'image') {
-    const cloudName = 'dxcfrulyd';
-    const apiKey = '822956219941674';
-    const apiSecret = 'rZhoHQ7DOnbmIh0iZgUNfTfzuUs';
+    const config = getCloudinaryConfig();
+    const { cloudName, apiKey, apiSecret } = config;
+
+    if (!cloudName || !apiKey || !apiSecret) {
+        console.warn("Cloudinary 설정(Cloud Name, API Key, API Secret)이 설정되지 않아 삭제할 수 없습니다.");
+        return;
+    }
+
     const timestamp = Math.floor(Date.now() / 1000);
     const signatureString = `public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
     const signature = await sha1(signatureString);
