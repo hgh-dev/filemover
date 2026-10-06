@@ -45,13 +45,63 @@ export function getCloudinaryConfig() {
     };
 }
 
-export async function saveCloudinaryConfig(config, uid = null) {
-    const cleanConfig = {
+function normalizeCloudinaryConfig(config = {}) {
+    return {
         cloudName: (config.cloudName || '').trim(),
         uploadPreset: (config.uploadPreset || '').trim(),
         apiKey: (config.apiKey || '').trim(),
         apiSecret: (config.apiSecret || '').trim()
     };
+}
+
+function hasUploadConfig(config) {
+    return Boolean(config && config.cloudName && config.uploadPreset);
+}
+
+function getFallbackSettingsRef(uid) {
+    return doc(db, 'cards', `app_settings_${uid}`);
+}
+
+async function persistCloudinaryConfig(uid, cleanConfig) {
+    const updatedAt = Date.now();
+    let saved = false;
+
+    // 기존 전용 설정 경로를 계속 지원합니다.
+    try {
+        await setDoc(
+            doc(db, 'user_settings', uid),
+            { cloudinary: cleanConfig, updatedAt },
+            { merge: true }
+        );
+        saved = true;
+    } catch (e) {
+        console.warn('Firestore 전용 설정 경로 저장 실패:', e);
+    }
+
+    // cards는 이 앱에서 이미 기기 간 동기화 권한이 확인된 경로입니다.
+    // 화면에는 표시하지 않는 계정별 고정 문서로 설정을 한 번 더 보관합니다.
+    try {
+        await setDoc(getFallbackSettingsRef(uid), {
+            uid,
+            type: 'app_settings',
+            name: 'Cloudinary settings',
+            cloudinary: cleanConfig,
+            updatedAt,
+            uploadTime: updatedAt,
+            expirationDays: 'permanent',
+            originalDuration: 'permanent',
+            status: 'complete'
+        });
+        saved = true;
+    } catch (e) {
+        console.warn('Firestore 설정 백업 경로 저장 실패:', e);
+    }
+
+    return saved;
+}
+
+export async function saveCloudinaryConfig(config, uid = null) {
+    const cleanConfig = normalizeCloudinaryConfig(config);
     try {
         localStorage.setItem('cloudinary_config', JSON.stringify(cleanConfig));
     } catch (e) {
@@ -59,48 +109,67 @@ export async function saveCloudinaryConfig(config, uid = null) {
     }
 
     if (uid && db) {
-        try {
-            await setDoc(doc(db, 'user_settings', uid), { cloudinary: cleanConfig }, { merge: true });
-        } catch (e) {
-            console.warn('Firestore 설정 동기화 실패 (로컬 저장은 유지됨):', e);
+        const saved = await persistCloudinaryConfig(uid, cleanConfig);
+        if (!saved) {
+            console.warn('Firestore 설정 동기화 실패 (로컬 저장은 유지됨)');
         }
     }
+
+    return cleanConfig;
 }
 
 export async function syncCloudinaryConfigFromFirestore(uid) {
     if (!uid || !db) return getCloudinaryConfig();
+
+    const localConfig = getCloudinaryConfig();
+    const remoteCandidates = [];
+
     try {
         const docRef = doc(db, 'user_settings', uid);
         const docSnap = await getDoc(docRef);
-        const localConfig = getCloudinaryConfig();
-        const hasLocalConfig = Boolean(localConfig.cloudName && localConfig.uploadPreset);
-
         if (docSnap.exists() && docSnap.data().cloudinary) {
-            const remoteConfig = docSnap.data().cloudinary;
-            const hasRemoteConfig = Boolean(remoteConfig.cloudName && remoteConfig.uploadPreset);
-
-            if (hasRemoteConfig) {
-                const merged = {
-                    cloudName: (remoteConfig.cloudName || localConfig.cloudName || '').trim(),
-                    uploadPreset: (remoteConfig.uploadPreset || localConfig.uploadPreset || '').trim(),
-                    apiKey: (remoteConfig.apiKey || localConfig.apiKey || '').trim(),
-                    apiSecret: (remoteConfig.apiSecret || localConfig.apiSecret || '').trim()
-                };
-                localStorage.setItem('cloudinary_config', JSON.stringify(merged));
-                return merged;
-            } else if (hasLocalConfig) {
-                // 원격에 설정이 없고 로컬에 유효한 설정이 있는 경우 원격으로 업로드 동기화
-                await setDoc(docRef, { cloudinary: localConfig }, { merge: true });
-                return localConfig;
-            }
-        } else if (hasLocalConfig) {
-            // 원격 문서가 없고 로컬에 설정이 있는 경우 원격에 자동 저장
-            await setDoc(docRef, { cloudinary: localConfig }, { merge: true });
-            return localConfig;
+            remoteCandidates.push({
+                config: normalizeCloudinaryConfig(docSnap.data().cloudinary),
+                updatedAt: Number(docSnap.data().updatedAt) || 0
+            });
         }
     } catch (e) {
-        console.warn('Firestore 설정 동기화 실패 (로컬 설정 사용):', e);
+        console.warn('Firestore 전용 설정 경로 불러오기 실패:', e);
     }
+
+    try {
+        const fallbackSnap = await getDoc(getFallbackSettingsRef(uid));
+        if (fallbackSnap.exists() && fallbackSnap.data().cloudinary) {
+            remoteCandidates.push({
+                config: normalizeCloudinaryConfig(fallbackSnap.data().cloudinary),
+                updatedAt: Number(fallbackSnap.data().updatedAt) || 0
+            });
+        }
+    } catch (e) {
+        console.warn('Firestore 설정 백업 경로 불러오기 실패:', e);
+    }
+
+    const newestRemote = remoteCandidates
+        .filter(candidate => hasUploadConfig(candidate.config))
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+
+    if (newestRemote) {
+        const merged = normalizeCloudinaryConfig({
+            cloudName: newestRemote.config.cloudName || localConfig.cloudName,
+            uploadPreset: newestRemote.config.uploadPreset || localConfig.uploadPreset,
+            apiKey: newestRemote.config.apiKey || localConfig.apiKey,
+            apiSecret: newestRemote.config.apiSecret || localConfig.apiSecret
+        });
+        localStorage.setItem('cloudinary_config', JSON.stringify(merged));
+        await persistCloudinaryConfig(uid, merged);
+        return merged;
+    }
+
+    if (hasUploadConfig(localConfig)) {
+        // 기존 기기의 로컬 설정을 새 계정 백업 경로로 자동 이전합니다.
+        await persistCloudinaryConfig(uid, localConfig);
+    }
+
     return getCloudinaryConfig();
 }
 

@@ -175,8 +175,11 @@ async function deleteSelectedCards() {
 updateSelectionModeUI();
 
 // 인증 상태 감지 및 UI 전환
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
     if (user) {
+        // 다른 기기에서 로그인한 경우 계정 설정을 먼저 복원한 뒤 앱을 엽니다.
+        await syncCloudinaryConfigFromFirestore(user.uid);
+
         loginScreen.style.display = 'none';
         appContent.style.display = 'flex';
 
@@ -191,7 +194,6 @@ onAuthStateChanged(auth, (user) => {
         popupEmail.innerText = user.email || '';
 
         loadUserData(user.uid);
-        syncCloudinaryConfigFromFirestore(user.uid);
     } else {
         loginScreen.style.display = 'flex';
         appContent.style.display = 'none';
@@ -292,6 +294,10 @@ async function loadUserData(uid) {
         for (const docSnap of querySnapshot.docs) {
             const cardData = docSnap.data();
             const docId = docSnap.id;
+
+            // 계정 간 설정 동기화용 숨김 문서는 카드 목록에 표시하거나 정리하지 않습니다.
+            if (cardData.type === 'app_settings') continue;
+
             const hasTag = !!(cardData.tagColor && TAG_META[cardData.tagColor]);
 
             if (hasTag) {
@@ -950,6 +956,7 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
 
         for (const d of snapshot.docs) {
             const cardData = d.data();
+            if (cardData.type === 'app_settings') continue;
             await deleteCardCloudinaryFiles(cardData);
             await deleteDoc(doc(db, 'cards', d.id));
         }
