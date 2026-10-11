@@ -57,6 +57,7 @@
 - 검증 명령: `bash scripts/validate.sh`
 - 로컬 미리보기: `python3 -m http.server 4173`
 - 배포: `main` 브랜치 변경 시 GitHub Pages 워크플로가 자동 실행됩니다.
+- 업데이트: 앱 버전 번호를 관리하지 않습니다. 실행하거나 새로고침할 때 배포된 최신 파일을 우선 사용하고, 오프라인일 때만 마지막 캐시를 사용합니다.
 
 새 Codex Cloud 환경을 만들 때 GitHub 저장소 `hgh-dev/filemover`를 선택하고 setup script에
 `bash .codex/setup.sh`를 지정하세요. 이 앱의 코드 수정과 기본 검증에는 별도 환경 변수나 secret이

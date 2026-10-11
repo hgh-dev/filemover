@@ -41,7 +41,7 @@ For UI changes, also inspect the page at desktop and mobile widths when browser 
 - Preserve browser-native ES modules and the static hosting structure.
 - Never commit Firebase admin credentials, Cloudinary API secrets, `.env` files, or generated user data.
 - The Firebase web configuration in `backend.js` is a public client configuration, not an admin credential.
-- Update `CACHE_NAME` in `service-worker.js` whenever cached production assets change.
+- Keep the versionless `filemover-runtime` cache name stable. The network-first worker refreshes cached production assets automatically; do not add release-number cache names.
 - Keep `manifest.json` valid JSON and keep icon files at their declared dimensions.
 - Do not rename root assets without updating `index.html`, `manifest.json`, and the service-worker cache list.
 

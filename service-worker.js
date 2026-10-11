@@ -1,4 +1,5 @@
-const CACHE_NAME = 'filemover-v1.1.4';
+// 릴리스 번호를 올리지 않아도 항상 같은 런타임 캐시를 최신 응답으로 교체합니다.
+const CACHE_NAME = 'filemover-runtime';
 const urlsToCache = [
     './',
     './index.html',
@@ -9,7 +10,7 @@ const urlsToCache = [
     './icon-512.png'
 ];
 
-// 서비스 워커 설치: 기본 리소스를 캐싱하고 새 버전을 즉시 활성화합니다.
+// 서비스 워커 설치: 기본 리소스를 캐싱하고 새 워커를 즉시 활성화합니다.
 self.addEventListener('install', event => {
     self.skipWaiting();
     event.waitUntil(
@@ -18,28 +19,23 @@ self.addEventListener('install', event => {
     );
 });
 
-// 활성화 시 기존 캐시를 지우고 열려 있는 모든 화면을 즉시 제어합니다.
+// 활성화 시 예전 버전형 캐시를 한 번만 정리하고 열린 화면을 즉시 제어합니다.
 self.addEventListener('activate', event => {
-    const cacheWhitelist = [CACHE_NAME];
     event.waitUntil(
         caches.keys()
             .then(async cacheNames => {
-                const hasPreviousVersion = cacheNames.some(
-                    cacheName => cacheName.startsWith('filemover-') && !cacheWhitelist.includes(cacheName)
+                const legacyCaches = cacheNames.filter(
+                    cacheName => cacheName.startsWith('filemover-v')
                 );
 
                 await Promise.all(
-                    cacheNames.map(cacheName => {
-                        if (cacheName.startsWith('filemover-') && !cacheWhitelist.includes(cacheName)) {
-                            return caches.delete(cacheName);
-                        }
-                    })
+                    legacyCaches.map(cacheName => caches.delete(cacheName))
                 );
 
                 await self.clients.claim();
 
-                // 이전 버전에서 넘어온 열린 화면도 새 워커가 직접 한 번 갱신합니다.
-                if (hasPreviousVersion) {
+                // 버전형 캐시에서 고정 캐시로 넘어가는 이번 변경만 열린 화면에 즉시 반영합니다.
+                if (legacyCaches.length > 0) {
                     const windowClients = await self.clients.matchAll({ type: 'window' });
                     await Promise.all(
                         windowClients.map(client => client.navigate(client.url).catch(() => null))

@@ -8,6 +8,14 @@ import {
 
 // PWA: 서비스 워커 등록
 if ('serviceWorker' in navigator) {
+    let isRefreshingForNewWorker = false;
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (isRefreshingForNewWorker) return;
+        isRefreshingForNewWorker = true;
+        window.location.reload();
+    });
+
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('./service-worker.js', { updateViaCache: 'none' })
             .then(registration => {
