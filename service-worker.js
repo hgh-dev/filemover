@@ -1,10 +1,12 @@
-const CACHE_NAME = 'filemover-v1.1.3';
+const CACHE_NAME = 'filemover-v1.1.4';
 const urlsToCache = [
     './',
     './index.html',
     './script.js',
     './backend.js',
-    './manifest.json'
+    './manifest.json',
+    './icon-192.png',
+    './icon-512.png'
 ];
 
 // 서비스 워커 설치: 기본 리소스를 캐싱하고 새 버전을 즉시 활성화합니다.

@@ -46,3 +46,19 @@
 
 ## 💡 요약
 **File Mover**는 언제든지 자료를 올려두었다가 필요할 때 꺼내쓰는 "개인용 클립보드 및 클라우드" 역할을 충실히 수행하도록 설계되었습니다. 깔끔한 정리 기능, 불필요한 서버 자원을 방치하지 않는 꼼꼼한 청소 알고리즘이 포함된 훌륭한 시스템 스크립트를 보유하고 있습니다.
+
+---
+
+## ☁️ Codex Cloud 개발 환경
+
+이 저장소는 별도의 빌드 과정이 없는 정적 PWA이며 Codex Cloud에서 바로 수정하고 검증할 수 있습니다.
+
+- Codex Cloud setup script: `bash .codex/setup.sh`
+- 검증 명령: `bash scripts/validate.sh`
+- 로컬 미리보기: `python3 -m http.server 4173`
+- 배포: `main` 브랜치 변경 시 GitHub Pages 워크플로가 자동 실행됩니다.
+
+새 Codex Cloud 환경을 만들 때 GitHub 저장소 `hgh-dev/filemover`를 선택하고 setup script에
+`bash .codex/setup.sh`를 지정하세요. 이 앱의 코드 수정과 기본 검증에는 별도 환경 변수나 secret이
+필요하지 않습니다. 실제 Firebase 및 Cloudinary 기능 검증은 허용된 테스트 계정으로 브라우저에서
+진행해야 하며, 관리자 키나 Cloudinary API secret을 저장소에 커밋하면 안 됩니다.
